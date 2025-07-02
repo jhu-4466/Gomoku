@@ -63,6 +63,10 @@ PLAYER_MAPS = {
     2: "Baseline Strategy",
 }
 
+# Reconnect
+MAX_RETRIES = 12
+RETRY_DELAY_S = 5
+
 
 class GomokuCanvas(QWidget):
     gameOverSignal = pyqtSignal(int)
@@ -140,7 +144,11 @@ class GomokuCanvas(QWidget):
             self.update()
 
     def mousePressEvent(self, event):
-        if self.game_over or not self.is_in_game:
+        if (
+            self.game_over
+            or not self.is_in_game
+            or self.player_map[self.current_player] != "Human"
+        ):
             return
 
         pos = (event.pos().x(), event.pos().y())
@@ -301,11 +309,13 @@ class GomokuBoard(QWidget):
         elif state["game_over"]:
             winner_name = state["p1_name"] if state["winner"] == 1 else state["p2_name"]
             text = f"<b>Game Over! Winner is {winner_name}.</b>"
+            self.pause_button.hide()
         else:
             p1_name = state["p1_name"]
             p2_name = state["p2_name"]
             current_player_name = p1_name if state["current_player"] == 1 else p2_name
             text = f"P1({p1_name}) vs P2({p2_name}) | <b>Turn {state['move_count'] + 1}</b>: {current_player_name} to move"
+            self.pause_button.show()
 
         self.info_label.setText(text)
 
@@ -336,10 +346,15 @@ class GomokuBoard(QWidget):
     def agent_move(self, row, col):
         self.canvas.agent_move(row, col)
 
+    def reconnectstatus_show(self, message: str):
+        self.info_label.setText(f"<i>{message}</i>")
+        self.pause_button.hide()
+
 
 class GomokuAgentHandler(QThread):
-    moveMade = pyqtSignal(int, int)
-    gameOver = pyqtSignal(str)
+    movedSignal = pyqtSignal(int, int)
+    reconnectSignal = pyqtSignal(str)
+    gameOverSignal = pyqtSignal(str)
 
     def __init__(self, game_canvas, players):
         super().__init__()
@@ -357,36 +372,49 @@ class GomokuAgentHandler(QThread):
                 continue
 
             player_url = player_config["url"]
-            try:
-                payload = {"board": self.game_canvas.board, "player": current_player_id}
-                response = requests.post(player_url, json=payload, timeout=5)
-                response.raise_for_status()
+            # MAX 1 min for AI to respond due to network issues
+            for attempt in range(MAX_RETRIES):
+                try:
+                    payload = {
+                        "board": self.game_canvas.board,
+                        "player": current_player_id,
+                    }
+                    response = requests.post(player_url, json=payload, timeout=3)
+                    response.raise_for_status()
 
-                data = response.json()
-                move = data.get("move")
-                if not move:
-                    self.gameOver.emit("Draw")
+                    data = response.json()
+                    move = data.get("move")
+                    # If request was successful, break out of the retry loop
                     break
+                except requests.RequestException as e:
+                    if attempt < MAX_RETRIES - 1:
+                        reconnect_notice = f"Connection lost. Retrying in {RETRY_DELAY_S}s... ({attempt + 2}/{MAX_RETRIES})"
+                        self.reconnectSignal.emit(reconnect_notice)
+                        self.msleep(RETRY_DELAY_S * 1000)
+                    else:
+                        error_msg = "Error: Cannot connect to AI player. Please try to start a new game later. So sorry for the inconvenience."
+                        self.gameOverSignal.emit(error_msg)
+                        self.running = False  # Stop the thread loop
 
-                row, col = move[0], move[1]
-                if self.game_canvas.board[row][col] != 0:
-                    error_msg = (
-                        f"Error: AI from {player_url} returned an occupied cell {move}."
-                    )
-                    print(error_msg)
-                    self.gameOver.emit("Error: AI returned invalid move.")
-                    break
-
-                self.moveMade.emit(row, col)
-                self.msleep(200)
-                if self.game_canvas.game_over:
-                    break
-
-                self.msleep(800)
-            except requests.RequestException as e:
-                print(f"Error communicating with AI at {player_url}: {e}")
-                self.gameOver.emit(f"Error: Cannot connect to AI.")
+            if not self.running:
+                break  # Exit if the game is over due to connection failure
+            if not move:
+                self.gameOver.emit("Draw")
                 break
+            row, col = move[0], move[1]
+            if self.game_canvas.board[row][col] != 0:
+                error_msg = (
+                    f"Error: AI from {player_url} returned an occupied cell {move}."
+                )
+                print(error_msg)
+                break
+
+            self.movedSignal.emit(row, col)
+            self.msleep(200)
+            if self.game_canvas.game_over:
+                break
+
+            self.msleep(800)
 
     def stop(self):
         self.running = False
@@ -503,9 +531,11 @@ class GomokuApp(QMainWindow):
         self.stop_game_loop()
 
         self.agent_handler = GomokuAgentHandler(self.game_engine.canvas, self.players)
-
-        self.agent_handler.moveMade.connect(self.game_engine.agent_move)
-        self.agent_handler.gameOver.connect(self.agent_gameover_handler)
+        self.agent_handler.movedSignal.connect(self.game_engine.agent_move)
+        self.agent_handler.reconnectSignal.connect(
+            self.game_engine.reconnectstatus_show
+        )
+        self.agent_handler.gameOverSignal.connect(self.agent_gameover_handler)
 
         self.agent_handler.start()
 
@@ -588,11 +618,24 @@ class GomokuApp(QMainWindow):
         self.players = {1: urls[0], 2: urls[1]}  # 1 - Black, 2 - White
 
         self.agent_handler = GomokuAgentHandler(self.game_engine, self.players)
-        self.agent_handler.gameOver.connect(self.agent_gameover_handler)
         self.agent_handler.start()
 
     def agent_gameover_handler(self, message: str):
-        pass
+        """
+        When the agent thread reports a permanent failure.
+        """
+        self.stop_game_loop()
+
+        self.game_engine.canvas.game_over = True
+        self.game_engine.canvas.is_in_game = False
+
+        if self.game_engine.is_paused:
+            self.game_engine.is_paused = False
+            self.game_engine.canvas.setEnabled(True)
+
+        self.game_engine.pause_button.hide()
+        self.game_engine.resume_button.hide()
+        self.game_engine.info_label.setText(f"<i>{message}</i>")
 
     def save_game_history(self, winner_player_id):
         """
