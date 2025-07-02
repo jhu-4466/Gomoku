@@ -267,17 +267,24 @@ class GomokuBoard(QWidget):
         self.resume_button.setFixedWidth(80)
         self.resume_button.hide()
 
+        """
+        Canavas Setup
+        """
         self.canvas = GomokuCanvas(self)
-        info_layout = QHBoxLayout()
+
+        info_bar_container = QWidget()
+        info_bar_container.setFixedHeight(INFO_BAR_HEIGHT)
+        info_layout = QHBoxLayout(info_bar_container)
         info_layout.setContentsMargins(10, 0, 10, 0)
         info_layout.addWidget(self.info_label)
         info_layout.addStretch()
         info_layout.addWidget(self.pause_button)
         info_layout.addWidget(self.resume_button)
+
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 5, 0, 0)
-        main_layout.setSpacing(5)
-        main_layout.addLayout(info_layout)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(info_bar_container)
         main_layout.addWidget(self.canvas)
         self.setLayout(main_layout)
 
@@ -287,11 +294,11 @@ class GomokuBoard(QWidget):
         self.canvas.gameOverSignal.connect(self.gameOverSignal)
 
     def update_info_bar(self, state: dict):
-        if state["game_over"]:
+        if self.is_paused:
+            text = "<i>Game Paused</i>"
+        elif state["game_over"]:
             winner_name = state["p1_name"] if state["winner"] == 1 else state["p2_name"]
             text = f"<b>Game Over! Winner is {winner_name}.</b>"
-        elif self.is_paused:
-            text = "<i>Game Paused</i>"
         else:
             p1_name = state["p1_name"]
             p2_name = state["p2_name"]
