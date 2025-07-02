@@ -6,32 +6,39 @@ app = Flask(__name__)
 GRID_SIZE = 19
 
 
-def check_win_at(board, r, c, player):
+def check_line_at(board, r, c, player, length):
+    """
+    Checks if placing a stone for 'player' at (r, c) creates a line of 'length'.
+    Returns True if it does, False otherwise.
+    """
     if not (0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE and board[r][c] == 0):
         return False
 
-    board[r][c] = player  # temp position for checking
-    directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
+    board[r][c] = player  # Temporarily place the stone for checking
+
+    directions = [(1, 0), (0, 1), (1, 1), (1, -1)]  # Horizontal, Vertical, Diagonals
     for dr, dc in directions:
         count = 1
-        for i in range(1, 5):
+        # Count in the positive direction
+        for i in range(1, length):
             nr, nc = r + i * dr, c + i * dc
             if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE and board[nr][nc] == player:
                 count += 1
             else:
                 break
-        for i in range(1, 5):
+        # Count in the negative direction
+        for i in range(1, length):
             nr, nc = r - i * dr, c - i * dc
             if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE and board[nr][nc] == player:
                 count += 1
             else:
                 break
 
-        if count >= 5:
-            board[r][c] = 0
+        if count >= length:
+            board[r][c] = 0  # Reset the board
             return True
 
-    board[r][c] = 0
+    board[r][c] = 0  # Reset the board
     return False
 
 
@@ -48,22 +55,26 @@ def get_move():
             if board[r][c] == 0:
                 empty_cells.append((r, c))
 
-    # if it is possible to win
+    # 1. Offensive Check: Can I win now? (Make a line of 5)
     for r, c in empty_cells:
-        if check_win_at(board, r, c, player):
-            print(f"Baseline Strategy: Found winning move at {(r, c)}")
+        if check_line_at(board, r, c, player, 5):
             return jsonify({"move": [r, c]})
-
-    # has to defense
+    # 2. Defensive Check: Must I block an opponent's win? (Opponent makes a line of 5)
     for r, c in empty_cells:
-        if check_win_at(board, r, c, opponent):
-            print(f"Baseline Strategy: Found blocking move at {(r, c)}")
+        if check_line_at(board, r, c, opponent, 5):
             return jsonify({"move": [r, c]})
-
-    # 3. back up radom startegy
+    # 3. Defensive Check: Must I block an opponent's four? (THIS IS A CRITICAL DEFENSE)
+    for r, c in empty_cells:
+        if check_line_at(board, r, c, opponent, 4):
+            return jsonify({"move": [r, c]})
+    # 4. Defensive Check: Must I block an opponent's three? (THIS IS THE USER-SUGGESTED IMPROVEMENT)
+    for r, c in empty_cells:
+        if check_line_at(board, r, c, opponent, 3):
+            return jsonify({"move": [r, c]})
+    # 5. Fallback Strategy: No immediate threats, play a random move
     if empty_cells:
-        chosen_move = random.choice(empty_cells)
-        print(f"Baseline Strategy: Fallback to random move: {chosen_move}")
+        random.shuffle(empty_cells)
+        chosen_move = empty_cells[0]
         return jsonify({"move": chosen_move})
 
     return jsonify({"move": None, "message": "Board is full"}), 200
