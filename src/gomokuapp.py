@@ -116,7 +116,7 @@ class GomokuCanvas(QWidget):
         self.move_history = []
         self.player_map = player_map
         self.is_in_game = True
-        self.emit_state_change()
+        self.state_change()
         self.update()
 
     def agent_move(self, row, col):
@@ -136,7 +136,7 @@ class GomokuCanvas(QWidget):
                 self.gameOverSignal.emit(self.winner)
             else:
                 self.current_player = 3 - self.current_player
-            self.emit_state_change()
+            self.state_change()
             self.update()
 
     def mousePressEvent(self, event):
@@ -161,15 +161,15 @@ class GomokuCanvas(QWidget):
                 self.game_over = True
                 self.is_in_game = False
                 self.winner = self.current_player
-                self.emit_state_change()
+                self.state_change()
                 self.gameOverSignal.emit(self.winner)
             else:
                 self.current_player = 3 - self.current_player
-                self.emit_state_change()
+                self.state_change()
             self.update()
 
-    def emit_state_change(self):
-        state = {
+    def get_current_state(self):
+        return {
             "p1_name": self.player_map.get(1, "Player 1"),
             "p2_name": self.player_map.get(2, "Player 2"),
             "current_player": self.current_player,
@@ -177,7 +177,9 @@ class GomokuCanvas(QWidget):
             "game_over": self.game_over,
             "winner": self.winner,
         }
-        self.stateChangedSignal.emit(state)
+
+    def state_change(self):
+        self.stateChangedSignal.emit(self.get_current_state())
 
     def check_win(self, r, c):
         p = self.board[r][c]
@@ -318,11 +320,7 @@ class GomokuBoard(QWidget):
             self.pause_button.show()
             self.resume_button.hide()
 
-        self.update_info_bar(
-            self.canvas.stateChangedSignal.emit(
-                self.canvas.emit_state_change() or self.canvas.__dict__
-            )
-        )
+        self.update_info_bar(self.canvas.get_current_state())
 
     def reset_game(self, players_config):
         player_map = {
