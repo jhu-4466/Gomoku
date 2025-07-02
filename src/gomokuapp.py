@@ -24,6 +24,8 @@ import numpy as np
 import requests
 import random
 import time
+import json
+from datetime import datetime
 
 
 # Board attributes
@@ -63,7 +65,7 @@ PLAYER_MAPS = {
 
 
 class GomokuCanvas(QWidget):
-    gameOverSignal = pyqtSignal(str)
+    gameOverSignal = pyqtSignal(int)
     stateChangedSignal = pyqtSignal(dict)
 
     def __init__(self, parent=None):
@@ -119,12 +121,19 @@ class GomokuCanvas(QWidget):
 
     def agent_move(self, row, col):
         if 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and self.board[row][col] == 0:
+            # record the move history
+            move_data = {
+                "turn": len(self.move_history) + 1,
+                "player": self.current_player,
+                "move": (row, col),
+            }
+            self.move_history.append(move_data)
+
             self.board[row][col] = self.current_player
-            self.move_history.append((row, col))
             if self.check_win(row, col):
                 self.game_over = True
                 self.winner = self.current_player
-                self.gameOverSignal.emit("Black" if self.winner == 1 else "White")
+                self.gameOverSignal.emit(self.winner)
             else:
                 self.current_player = 3 - self.current_player
             self.emit_state_change()
@@ -139,14 +148,21 @@ class GomokuCanvas(QWidget):
         col = round((pos[0] - BOARD_MARGIN) / CELL_SIZE)
 
         if 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and self.board[row][col] == 0:
+            # record the move history
+            move_data = {
+                "turn": len(self.move_history) + 1,
+                "player": self.current_player,
+                "move": (row, col),
+            }
+            self.move_history.append(move_data)
+
             self.board[row][col] = self.current_player
-            self.move_history.append((row, col))
             if self.check_win(row, col):
                 self.game_over = True
                 self.is_in_game = False
                 self.winner = self.current_player
                 self.emit_state_change()
-                self.gameOverSignal.emit("Black" if self.winner == 1 else "White")
+                self.gameOverSignal.emit(self.winner)
             else:
                 self.current_player = 3 - self.current_player
                 self.emit_state_change()
@@ -229,7 +245,7 @@ class GomokuCanvas(QWidget):
 
 
 class GomokuBoard(QWidget):
-    gameOverSignal = pyqtSignal(str)
+    gameOverSignal = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -260,7 +276,7 @@ class GomokuBoard(QWidget):
         info_layout.addWidget(self.resume_button)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 5, 0, 0)
-        main_layout.setSpacing(5)  # 设置控件之间的垂直间距
+        main_layout.setSpacing(5)
         main_layout.addLayout(info_layout)
         main_layout.addWidget(self.canvas)
         self.setLayout(main_layout)
@@ -357,18 +373,15 @@ class GomokuAgentHandler(QThread):
                     break
 
                 self.moveMade.emit(row, col)
-                self.msleep(100)
+                self.msleep(200)
                 if self.game_canvas.game_over:
                     break
 
-                self.msleep(400)
-
+                self.msleep(800)
             except requests.RequestException as e:
                 print(f"Error communicating with AI at {player_url}: {e}")
                 self.gameOver.emit(f"Error: Cannot connect to AI.")
                 break
-
-        print("Agent handler thread finished.")
 
     def stop(self):
         self.running = False
@@ -476,7 +489,7 @@ class GomokuApp(QMainWindow):
 
         self.agent_players_config = [
             {"name": "Random Strategy", "url": "http://127.0.0.1:5001/get_move"},
-            {"name": "Baseline Strategy", "url": "http://1.2.7.0.0.1:5002/get_move"},
+            {"name": "Baseline Strategy", "url": "http://127.0.0.1:5002/get_move"},
         ]
         self.agent_handler = None
         self.players = {1: None, 2: None}  # 1: Black, 2: White
@@ -515,10 +528,14 @@ class GomokuApp(QMainWindow):
             self.game_engine.reset_game(self.players)
             self.start_game_loop()
 
-    def gameover_assert(self, winner: str):
+    def gameover_assert(self, winner: int):
+        self.save_game_history(winner)
+
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Game Over")
-        msg_box.setText(f"<h2>{winner} Wins!</h2>")
+        msg_box.setText(
+            f"<h2>{self.players[winner]["name"]if self.players[winner] else "Human"} Wins!</h2>"
+        )
         msg_box.setInformativeText("What would you like to do next?")
         msg_box.setIcon(QMessageBox.Icon.Question)
 
@@ -533,7 +550,7 @@ class GomokuApp(QMainWindow):
         msg_box.exec_()
 
         if msg_box.clickedButton() == play_again_btn:
-            self.game_engine.reset_game()
+            self.game_engine.reset_game(self.players)
 
     def rules_description(self):
         rules_text = """
@@ -571,12 +588,46 @@ class GomokuApp(QMainWindow):
     def agent_gameover_handler(self, message: str):
         pass
 
+    def save_game_history(self, winner_player_id):
+        """
+        Saves the completed game's data to a JSON file.
+        """
+        if not os.path.exists("game_history"):
+            os.makedirs("game_history")
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"./game_history/game_{timestamp}.json"
+
+        p1_name = self.players[1]["name"] if self.players[1] else "Human"
+        p2_name = self.players[2]["name"] if self.players[2] else "Human"
+        winner_name = "None"
+        if winner_player_id == 1:
+            winner_name = p1_name
+        elif winner_player_id == 2:
+            winner_name = p2_name
+        history_data = {
+            "game_id": timestamp,
+            "winner_player_id": winner_player_id,
+            "winner_name": winner_name,
+            "players": {
+                "1": {"type": p1_name, "color": "Black"},
+                "2": {"type": p2_name, "color": "White"},
+            },
+            "move_history": self.game_engine.canvas.move_history,
+        }
+
+        try:
+            with open(filename, "w") as f:
+                json.dump(history_data, f, indent=4)
+            print(f"Game history saved to {filename}")
+        except Exception as e:
+            print(f"Error saving game history: {e}")
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     main_window = GomokuApp()
     main_window.show()
-    # main_window.start_ai_game()
 
     sys.exit(app.exec_())
