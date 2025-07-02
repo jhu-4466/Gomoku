@@ -551,6 +551,7 @@ class GomokuApp(QMainWindow):
 
         if msg_box.clickedButton() == play_again_btn:
             self.game_engine.reset_game(self.players)
+            self.start_game_loop()
 
     def rules_description(self):
         rules_text = """
