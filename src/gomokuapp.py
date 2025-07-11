@@ -60,15 +60,25 @@ MAX_RETRIES = 12
 RETRY_DELAY_S = 5
 
 
+# Game Phases for Swap2
+class GamePhase:
+    NORMAL = 0
+    SWAP2_P1_PLACE_3 = 1
+    SWAP2_P2_CHOOSE_ACTION = 2
+    SWAP2_P2_PLACE_2 = 3
+    SWAP2_P1_CHOOSE_COLOR = 4
+
+
 class GomokuCanvas(QWidget):
     gameOverSignal = pyqtSignal(int)
     stateChangedSignal = pyqtSignal(dict)
+    requestP2ChoiceSignal = pyqtSignal()
+    requestP1ColorChoiceSignal = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFixedSize(PYGAME_CANVAS_WIDTH, PYGAME_CANVAS_HEIGHT - INFO_BAR_HEIGHT)
-
         self.setMouseTracking(True)
 
         pygame.init()
@@ -79,16 +89,28 @@ class GomokuCanvas(QWidget):
         self.font_small = pygame.font.SysFont("sans", 20)
         self.font_large = pygame.font.SysFont("sans", 50)
 
+        # --- State variables ---
         self.board = [[0] * GRID_SIZE for _ in range(GRID_SIZE)]
-        self.current_player = 1
+        self.current_player_id = 1
         self.game_over = False
-        self.winner = None
+        self.winner_id = None
         self.move_history = []
-        self.player_map = {1: "Human", 2: "AI"}
         self.is_in_game = False
+
+        # --- Player and Color Mapping ---
+        self.player_names = {1: "Player 1", 2: "Player 2"}  # Static map of ID to name
+        self.player_colors = {
+            1: 1,
+            2: 2,
+        }  # Dynamic map of ID to color (1=Black, 2=White)
+
+        # --- Rule settings ---
         self.banned_moves_enabled = False
+        self.swap2_enabled = False
         self.banned_point_on_click = None
         self.banned_point_on_hover = None
+        self.game_phase = GamePhase.NORMAL
+        self.swap2_stones_to_place = []
 
     def paintEvent(self, event):
         self.draw_frame()
@@ -108,7 +130,6 @@ class GomokuCanvas(QWidget):
         self.screen.fill(COLOR_BOARD)
         self.draw_board_grid()
         self.draw_pieces()
-
         if self.banned_point_on_hover:
             self._draw_banned_overlay(self.banned_point_on_hover)
         elif self.banned_point_on_click:
@@ -124,174 +145,246 @@ class GomokuCanvas(QWidget):
         s.fill(COLOR_BANNED)
         self.screen.blit(s, (center[0] - CELL_SIZE // 2, center[1] - CELL_SIZE // 2))
 
-    def reset_game(self, player_map, banned_moves_enabled):
+    def reset_game(self, player_names, rules):
         self.board = [[0] * GRID_SIZE for _ in range(GRID_SIZE)]
-        self.current_player = 1
+        self.current_player_id = 1
         self.game_over = False
-        self.winner = None
+        self.winner_id = None
         self.move_history = []
-        self.player_map = player_map
+        self.player_names = player_names.copy()
+        self.player_colors = {1: 1, 2: 2}  # Reset to default
         self.is_in_game = True
-        self.banned_moves_enabled = banned_moves_enabled
+
+        self.banned_moves_enabled = rules.get("banned_moves_enabled", False)
+        self.swap2_enabled = rules.get("swap2_enabled", False)
+
+        if self.swap2_enabled:
+            self.game_phase = GamePhase.SWAP2_P1_PLACE_3
+            self.swap2_stones_to_place = [1, 1, 2]  # 2 Black, 1 White
+        else:
+            self.game_phase = GamePhase.NORMAL
+
         self.state_change()
         self.update()
 
-    def agent_move(self, row, col):
-        if 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and self.board[row][col] == 0:
-            self.place_piece(row, col)
+    def mousePressEvent(self, event):
+        if self.game_over or not self.is_in_game:
+            return
+
+        if self.player_names.get(self.current_player_id) != "Human":
+            return
+
+        pos = (event.pos().x(), event.pos().y())
+        row = round((pos[1] - BOARD_MARGIN) / CELL_SIZE)
+        col = round((pos[0] - BOARD_MARGIN) / CELL_SIZE)
+        if not (
+            0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and self.board[row][col] == 0
+        ):
+            return
+
+        if self.game_phase == GamePhase.NORMAL:
+            self.handle_normal_move(row, col)
+        elif self.game_phase in [
+            GamePhase.SWAP2_P1_PLACE_3,
+            GamePhase.SWAP2_P2_PLACE_2,
+        ]:
+            self.handle_swap2_placement(row, col)
+
+    # BUG FIX: New method to correctly route agent moves
+    def agent_place_stone(self, row, col):
+        """Public method for the agent handler to place a stone."""
+        if self.game_phase in [GamePhase.SWAP2_P1_PLACE_3, GamePhase.SWAP2_P2_PLACE_2]:
+            self.handle_swap2_placement(row, col)
+        else:  # Assumes GamePhase.NORMAL
+            self.handle_normal_move(row, col)
+
+    def handle_swap2_placement(self, row, col):
+        if not self.swap2_stones_to_place:
+            print("Warning: handle_swap2_placement called with no stones to place.")
+            return
+
+        stone_color = self.swap2_stones_to_place.pop(0)
+        self.board[row][col] = stone_color
+
+        # Determine which player is making the move for history
+        turn_player_id = 1 if self.game_phase == GamePhase.SWAP2_P1_PLACE_3 else 2
+        self.move_history.append(
+            {
+                "turn": len(self.move_history) + 1,
+                "player_id": turn_player_id,
+                "move": (row, col),
+                "color": stone_color,
+            }
+        )
+        self.update()
+
+        if not self.swap2_stones_to_place:
+            if self.game_phase == GamePhase.SWAP2_P1_PLACE_3:
+                self.game_phase = GamePhase.SWAP2_P2_CHOOSE_ACTION
+                self.current_player_id = 2
+                self.requestP2ChoiceSignal.emit()
+            elif self.game_phase == GamePhase.SWAP2_P2_PLACE_2:
+                self.game_phase = GamePhase.SWAP2_P1_CHOOSE_COLOR
+                self.current_player_id = 1
+                self.requestP1ColorChoiceSignal.emit()
+        self.state_change()
+
+    def handle_p2_choice(self, choice):
+        if choice == "TAKE_BLACK":
+            self.player_colors = {1: 2, 2: 1}
+            self.current_player_id = 1
+        elif choice == "TAKE_WHITE":
+            self.player_colors = {1: 1, 2: 2}
+            self.current_player_id = 2
+        elif choice == "PLACE_2":
+            self.game_phase = GamePhase.SWAP2_P2_PLACE_2
+            self.swap2_stones_to_place = [1, 2]
+
+        if choice != "PLACE_2":
+            self.game_phase = GamePhase.NORMAL
+        self.state_change()
+
+    def handle_p1_final_choice(self, color_choice):
+        if color_choice == "CHOOSE_BLACK":
+            self.player_colors = {1: 1, 2: 2}
+            self.current_player_id = 2
+        else:
+            self.player_colors = {1: 2, 2: 1}
+            self.current_player_id = 1
+        self.game_phase = GamePhase.NORMAL
+        self.state_change()
+
+    def handle_normal_move(self, row, col):
+        if self.board[row][col] != 0:
+            print(
+                f"Warning: Attempted to place piece on occupied cell ({row}, {col}). Ignoring."
+            )
+            return
+
+        color_to_play = self.player_colors[self.current_player_id]
+        if self.banned_moves_enabled and color_to_play == 1:
+            is_banned, reason = self.check_banned_move(row, col)
+            if is_banned:
+                self.banned_point_on_click = (row, col)
+                self.update()
+                QMessageBox.warning(
+                    self,
+                    "Banned Move",
+                    f"This move ({reason}) is not allowed for Black.",
+                )
+                return
+
+        # Place piece and check for win/end of game
+        self.board[row][col] = color_to_play
+        self.move_history.append(
+            {
+                "turn": len(self.move_history) + 1,
+                "player_id": self.current_player_id,
+                "move": (row, col),
+                "color": color_to_play,
+            }
+        )
+
+        if self.check_win(row, col, color_to_play):
+            self.game_over = True
+            self.is_in_game = False
+            self.winner_id = self.current_player_id
+            self.gameOverSignal.emit(self.winner_id)
+        elif (
+            self.banned_moves_enabled
+            and color_to_play == 1
+            and self.check_overline(row, col, color_to_play)
+        ):
+            self.game_over = True
+            self.is_in_game = False
+            self.winner_id = 3 - self.current_player_id
+            self.gameOverSignal.emit(self.winner_id)
+        else:
+            self.current_player_id = 3 - self.current_player_id
+
+        self.state_change()
+        self.update()
+
+    def get_current_state(self):
+        return {
+            "player_names": self.player_names,
+            "player_colors": self.player_colors,
+            "current_player_id": self.current_player_id,
+            "move_count": len(self.move_history),
+            "game_over": self.game_over,
+            "winner_id": self.winner_id,
+            "game_phase": self.game_phase,
+            "swap2_stones_to_place": self.swap2_stones_to_place,
+        }
 
     def mouseMoveEvent(self, event):
+        color_to_play = self.player_colors.get(self.current_player_id, 1)
         is_black_human_turn = (
             not self.game_over
             and self.is_in_game
             and self.banned_moves_enabled
-            and self.player_map.get(self.current_player) == "Human"
-            and self.current_player == 1
+            and self.player_names.get(self.current_player_id) == "Human"
+            and color_to_play == 1
+            and self.game_phase == GamePhase.NORMAL
         )
-
         if not is_black_human_turn:
             if self.banned_point_on_hover:
                 self.banned_point_on_hover = None
                 self.update()
             return
-
         pos = (event.pos().x(), event.pos().y())
         row = round((pos[1] - BOARD_MARGIN) / CELL_SIZE)
         col = round((pos[0] - BOARD_MARGIN) / CELL_SIZE)
-
         new_hover_point = None
         if 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and self.board[row][col] == 0:
             is_banned, _ = self.check_banned_move(row, col)
             if is_banned:
                 new_hover_point = (row, col)
-
         if self.banned_point_on_hover != new_hover_point:
             self.banned_point_on_hover = new_hover_point
             self.update()
 
-    def mousePressEvent(self, event):
-        if (
-            self.game_over
-            or not self.is_in_game
-            or self.player_map.get(self.current_player) != "Human"
-        ):
-            return
-
-        pos = (event.pos().x(), event.pos().y())
-        row = round((pos[1] - BOARD_MARGIN) / CELL_SIZE)
-        col = round((pos[0] - BOARD_MARGIN) / CELL_SIZE)
-
-        if 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and self.board[row][col] == 0:
-            if self.banned_moves_enabled and self.current_player == 1:
-                is_banned, reason = self.check_banned_move(row, col)
-                if is_banned:
-                    print(f"Banned move at ({row}, {col}): {reason}")
-                    self.banned_point_on_click = (row, col)
-                    self.update()
-                    QMessageBox.warning(
-                        self,
-                        "Banned Move",
-                        f"This move ({reason}) is not allowed for Black.",
-                    )
-                    return
-
-            self.place_piece(row, col)
-
-    def place_piece(self, row, col):
-        move_data = {
-            "turn": len(self.move_history) + 1,
-            "player": self.current_player,
-            "move": (row, col),
-        }
-        self.move_history.append(move_data)
-
-        self.board[row][col] = self.current_player
-
-        if self.check_win(row, col):
-            self.game_over = True
-            self.is_in_game = False
-            self.winner = self.current_player
-            self.gameOverSignal.emit(self.winner)
-        elif (
-            self.banned_moves_enabled
-            and self.current_player == 1
-            and self.check_overline(row, col)
-        ):
-            self.game_over = True
-            self.is_in_game = False
-            self.winner = 2
-            self.gameOverSignal.emit(self.winner)
-        else:
-            self.current_player = 3 - self.current_player
-
-        self.state_change()
-        self.update()
-
-    def get_line(self, r, c, dr, dc):
-        line = []
-        for i in range(-4, 5):
-            nr, nc = r + i * dr, c + i * dc
-            if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
-                line.append(self.board[nr][nc])
-            else:
-                line.append(-1)
-        return line
-
     def check_banned_move(self, r, c):
         if self.board[r][c] != 0:
             return False, ""
-
         self.board[r][c] = 1
-
-        # [MODIFIED] Check for overline first
-        if self.check_overline(r, c):
+        if self.check_overline(r, c, 1):
             self.board[r][c] = 0
             return True, "Overline"
-
-        threes = 0
-        fours = 0
-        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
-
-        for dr, dc in directions:
-            line = self.get_line(r, c, dr, dc)
-            line_str = "".join(map(str, line))
-            if "01110" in line_str.replace("2", "0"):
+        threes, fours = 0, 0
+        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+            line = [
+                (
+                    self.board[r + i * dr][c + i * dc]
+                    if 0 <= r + i * dr < 15 and 0 <= c + i * dc < 15
+                    else -1
+                )
+                for i in range(-4, 5)
+            ]
+            line_str = "".join(map(str, line)).replace("2", "0")
+            if "01110" in line_str:
                 threes += 1
-
             if "1111" in line_str:
                 fours += 1
-
         self.board[r][c] = 0
-
         if threes >= 2:
             return True, "Three-Three"
         if fours >= 2:
             return True, "Four-Four"
-
         return False, ""
 
-    def check_overline(self, r, c):
-        p = self.board[r][c]
-        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
-        for dr, dc in directions:
+    def check_overline(self, r, c, p):
+        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             count = 1
             for i in range(1, 6):
                 nr, nc = r + i * dr, c + i * dc
-                if (
-                    0 <= nr < GRID_SIZE
-                    and 0 <= nc < GRID_SIZE
-                    and self.board[nr][nc] == p
-                ):
+                if 0 <= nr < 15 and 0 <= nc < 15 and self.board[nr][nc] == p:
                     count += 1
                 else:
                     break
             for i in range(1, 6):
                 nr, nc = r - i * dr, c - i * dc
-                if (
-                    0 <= nr < GRID_SIZE
-                    and 0 <= nc < GRID_SIZE
-                    and self.board[nr][nc] == p
-                ):
+                if 0 <= nr < 15 and 0 <= nc < 15 and self.board[nr][nc] == p:
                     count += 1
                 else:
                     break
@@ -299,44 +392,24 @@ class GomokuCanvas(QWidget):
                 return True
         return False
 
-    def check_win(self, r, c):
-        p = self.board[r][c]
-        d = [(1, 0), (0, 1), (1, 1), (1, -1)]
-        for d_row, d_col in d:
+    def check_win(self, r, c, p):
+        for d_row, d_col in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             count = 1
             for i in range(1, 5):
                 nr, nc = r + i * d_row, c + i * d_col
-                if (
-                    0 <= nr < GRID_SIZE
-                    and 0 <= nc < GRID_SIZE
-                    and self.board[nr][nc] == p
-                ):
+                if 0 <= nr < 15 and 0 <= nc < 15 and self.board[nr][nc] == p:
                     count += 1
                 else:
                     break
             for i in range(1, 5):
                 nr, nc = r - i * d_row, c - i * d_col
-                if (
-                    0 <= nr < GRID_SIZE
-                    and 0 <= nc < GRID_SIZE
-                    and self.board[nr][nc] == p
-                ):
+                if 0 <= nr < 15 and 0 <= nc < 15 and self.board[nr][nc] == p:
                     count += 1
                 else:
                     break
             if count == 5:
                 return True
         return False
-
-    def get_current_state(self):
-        return {
-            "p1_name": self.player_map.get(1, "Player 1"),
-            "p2_name": self.player_map.get(2, "Player 2"),
-            "current_player": self.current_player,
-            "move_count": len(self.move_history),
-            "game_over": self.game_over,
-            "winner": self.winner,
-        }
 
     def state_change(self):
         self.stateChangedSignal.emit(self.get_current_state())
@@ -415,49 +488,93 @@ class GomokuBoard(QWidget):
         self.resume_button.clicked.connect(self.toggle_pause)
         self.canvas.stateChangedSignal.connect(self.update_info_bar)
         self.canvas.gameOverSignal.connect(self.gameOverSignal)
+        self.canvas.requestP2ChoiceSignal.connect(self.prompt_p2_choice)
+        self.canvas.requestP1ColorChoiceSignal.connect(self.prompt_p1_color_choice)
 
     def update_info_bar(self, state: dict):
         if self.is_paused:
             text = "<i>Game Paused</i>"
         elif state["game_over"]:
             winner_name = "No one"
-            if state["winner"] is not None:
-                winner_name = (
-                    state["p1_name"] if state["winner"] == 1 else state["p2_name"]
-                )
+            if state["winner_id"] is not None:
+                winner_name = state["player_names"].get(state["winner_id"], "Unknown")
             text = f"<b>Game Over! Winner is {winner_name}.</b>"
             self.pause_button.hide()
+        elif state["game_phase"] != GamePhase.NORMAL:
+            text = self.get_swap2_info_text(state)
+            self.pause_button.hide()
         else:
-            p1_name = state["p1_name"]
-            p2_name = state["p2_name"]
-            current_player_name = p1_name if state["current_player"] == 1 else p2_name
-            text = f"P1({p1_name}) vs P2({p2_name}) | <b>Turn {state['move_count'] + 1}</b>: {current_player_name} to move"
+            p1_name = state["player_names"][1]
+            p2_name = state["player_names"][2]
+            p1_color_str = "Black" if state["player_colors"][1] == 1 else "White"
+            p2_color_str = "Black" if state["player_colors"][2] == 1 else "White"
+            current_player_id = state["current_player_id"]
+            current_player_color_str = (
+                "Black" if state["player_colors"][current_player_id] == 1 else "White"
+            )
+
+            text = f"<b>{p1_name} ({p1_color_str})</b> vs <b>{p2_name} ({p2_color_str})</b> | Turn {state['move_count'] + 1}: <b>{current_player_color_str}</b> to move"
             self.pause_button.show()
         self.info_label.setText(text)
+        self.info_label.setText(text)
+
+    def get_swap2_info_text(self, state):
+        phase = state["game_phase"]
+
+        if phase == GamePhase.SWAP2_P1_PLACE_3:
+            player_name = state["player_names"][1]
+            return f"<b>Swap2:</b> {player_name} places 3 stones."
+        elif phase == GamePhase.SWAP2_P2_CHOOSE_ACTION:
+            player_name = state["player_names"][2]
+            return f"<b>Swap2:</b> {player_name}, make your choice."
+        elif phase == GamePhase.SWAP2_P2_PLACE_2:
+            player_name = state["player_names"][2]
+            return f"<b>Swap2:</b> {player_name} places 2 more stones."
+        elif phase == GamePhase.SWAP2_P1_CHOOSE_COLOR:
+            player_name = state["player_names"][1]
+            return f"<b>Swap2:</b> {player_name}, choose your final color."
+        return ""
+
+    def prompt_p2_choice(self):
+        if self.canvas.player_names.get(2) == "Human":
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Player 2's Choice")
+            dialog.setText("Player 2, choose your action:")
+            dialog.setIcon(QMessageBox.Question)
+            black_btn = dialog.addButton("Take Black", QMessageBox.AcceptRole)
+            white_btn = dialog.addButton("Take White", QMessageBox.AcceptRole)
+            swap_btn = dialog.addButton("Place 2 More Stones", QMessageBox.RejectRole)
+            dialog.exec_()
+            if dialog.clickedButton() == black_btn:
+                self.canvas.handle_p2_choice("TAKE_BLACK")
+            elif dialog.clickedButton() == white_btn:
+                self.canvas.handle_p2_choice("TAKE_WHITE")
+            else:
+                self.canvas.handle_p2_choice("PLACE_2")
+
+    def prompt_p1_color_choice(self):
+        if self.canvas.player_names.get(1) == "Human":
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Player 1's Final Choice")
+            dialog.setText("Player 1, choose your color for the rest of the game:")
+            dialog.setIcon(QMessageBox.Question)
+            black_btn = dialog.addButton("Choose Black", QMessageBox.AcceptRole)
+            white_btn = dialog.addButton("Choose White", QMessageBox.AcceptRole)
+            dialog.exec_()
+            if dialog.clickedButton() == black_btn:
+                self.canvas.handle_p1_final_choice("CHOOSE_BLACK")
+            else:
+                self.canvas.handle_p1_final_choice("CHOOSE_WHITE")
 
     def toggle_pause(self):
         self.is_paused = not self.is_paused
         self.canvas.setEnabled(not self.is_paused)
-        if self.is_paused:
-            self.pause_button.hide()
-            self.resume_button.show()
-        else:
-            self.pause_button.show()
-            self.resume_button.hide()
         self.update_info_bar(self.canvas.get_current_state())
 
-    def reset_game(self, players_config, banned_moves_enabled):
-        player_map = {
-            1: players_config[1]["name"] if players_config[1] else "Human",
-            2: players_config[2]["name"] if players_config[2] else "AI",
-        }
+    def reset_game(self, player_names, rules):
         if self.is_paused:
             self.toggle_pause()
-        self.canvas.reset_game(player_map, banned_moves_enabled)
-        self.pause_button.show()
-
-    def agent_move(self, row, col):
-        self.canvas.agent_move(row, col)
+        self.canvas.reset_game(player_names, rules)
 
     def reconnectstatus_show(self, message: str):
         self.info_label.setText(f"<i>{message}</i>")
@@ -466,13 +583,15 @@ class GomokuBoard(QWidget):
 
 class GomokuAgentHandler(QThread):
     movedSignal = pyqtSignal(int, int)
+    p2ChoiceSignal = pyqtSignal(str)
+    p1ChoiceSignal = pyqtSignal(str)
     reconnectSignal = pyqtSignal(str)
     gameOverSignal = pyqtSignal(str)
 
-    def __init__(self, game_canvas, players):
+    def __init__(self, game_canvas, player_configs):
         super().__init__()
         self.game_canvas = game_canvas
-        self.players = players
+        self.player_configs = player_configs
         self.running = True
 
     def run(self):
@@ -480,66 +599,94 @@ class GomokuAgentHandler(QThread):
             if not self.running:
                 break
 
-            current_player_id = self.game_canvas.current_player
-            player_config = self.players.get(current_player_id)
+            state = self.game_canvas.get_current_state()
+            player_id = state["current_player_id"]
+            player_name = state["player_names"][player_id]
 
-            if player_config is None:
+            if player_name == "Human":
                 self.msleep(100)
                 continue
 
-            player_url = player_config["url"]
-            player_timeout = player_config.get("timeout", 5)
-            move = None
-            for attempt in range(MAX_RETRIES):
-                if not self.running:
-                    break
-                try:
-                    payload = {
-                        "board": self.game_canvas.board,
-                        "player": current_player_id,
-                        "banned_moves_enabled": self.game_canvas.banned_moves_enabled,
-                    }
-                    response = requests.post(
-                        player_url, json=payload, timeout=player_timeout
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    move = data.get("move")
-                    break
-                except requests.RequestException:
-                    if attempt < MAX_RETRIES - 1:
-                        reconnect_notice = f"Connection lost. Retrying... ({attempt + 1}/{MAX_RETRIES})"
-                        self.reconnectSignal.emit(reconnect_notice)
+            player_config = self.player_configs[player_id]
+            game_phase = state["game_phase"]
 
-                        for _ in range(RETRY_DELAY_S * 10):
-                            if not self.running:
-                                break
-                            self.msleep(100)
-                        if not self.running:
-                            break
-                    else:
-                        error_msg = "Error: Cannot connect to AI player."
-                        self.gameOverSignal.emit(error_msg)
-                        self.running = False
+            # AI Action Logic
+            if game_phase == GamePhase.SWAP2_P2_CHOOSE_ACTION and player_id == 2:
+                self.get_ai_swap2_choice(player_config, state, "P2_CHOOSE")
+            elif game_phase == GamePhase.SWAP2_P1_CHOOSE_COLOR and player_id == 1:
+                self.get_ai_swap2_choice(player_config, state, "P1_CHOOSE")
+            else:
+                # All other phases are move-making phases for the current player
+                self.get_ai_move(player_config, state)
 
-            if not self.running:
-                break
-
-            if move is None:
-                if self.running:
-                    self.gameOverSignal.emit("Draw")
-                break
-
-            row, col = move[0], move[1]
-            if self.game_canvas.board[row][col] != 0:
-                print(f"Error: AI from {player_url} returned an occupied cell {move}.")
-                break
-
-            self.movedSignal.emit(row, col)
-            self.msleep(200)
             if self.game_canvas.game_over:
                 break
-            self.msleep(800)
+            # Add a small delay to make AI moves more observable
+            self.msleep(300)
+
+    def get_ai_swap2_choice(self, player_config, state, choice_type):
+        payload = self.build_payload(state)
+        payload["game_phase"] = choice_type
+
+        choice = self.make_request(player_config, payload).get("choice")
+
+        if choice and self.running:
+            if choice_type == "P2_CHOOSE":
+                self.p2ChoiceSignal.emit(choice)
+            elif choice_type == "P1_CHOOSE":
+                self.p1ChoiceSignal.emit(choice)
+
+    def get_ai_move(self, player_config, state):
+        payload = self.build_payload(state)
+        move = self.make_request(player_config, payload).get("move")
+
+        if move and self.running:
+            row, col = move[0], move[1]
+            if self.game_canvas.board[row][col] != 0:
+                print(
+                    f"Error: AI from {player_config['url']} returned an occupied cell {move}."
+                )
+                self.gameOverSignal.emit(f"Error: AI returned invalid move.")
+                return
+            self.movedSignal.emit(row, col)
+
+    def build_payload(self, state):
+        player_id = state["current_player_id"]
+        return {
+            "board": self.game_canvas.board,
+            "player_id": player_id,
+            "color_to_play": state["player_colors"][player_id],
+            "banned_moves_enabled": self.game_canvas.banned_moves_enabled,
+            "game_phase": state["game_phase"],
+            "move_history": self.game_canvas.move_history,
+        }
+
+    def make_request(self, player_config, payload):
+        player_url = player_config["url"]
+        player_timeout = player_config.get("timeout", 5)
+        for attempt in range(MAX_RETRIES):
+            if not self.running:
+                return {}
+            try:
+                response = requests.post(
+                    player_url, json=payload, timeout=player_timeout
+                )
+                response.raise_for_status()
+                return response.json()
+            except requests.RequestException as e:
+                print(f"Request failed for {player_config['name']}: {e}")
+                if attempt < MAX_RETRIES - 1:
+                    reconnect_notice = (
+                        f"Connection lost. Retrying... ({attempt + 1}/{MAX_RETRIES})"
+                    )
+                    self.reconnectSignal.emit(reconnect_notice)
+                    self.msleep(RETRY_DELAY_S * 1000)
+                else:
+                    self.gameOverSignal.emit(
+                        f"Error: Cannot connect to {player_config['name']}."
+                    )
+                    self.running = False
+        return {}
 
     def stop(self):
         self.running = False
@@ -549,68 +696,106 @@ class NewGameDialog(QDialog):
     def __init__(self, agent_players, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Start a New Game")
-
         main_layout = QVBoxLayout(self)
 
+        # --- Player Selection ---
+        player_selection_layout = QHBoxLayout()
+        self.left_player_group = QGroupBox("Left Player")
+        left_player_layout = QVBoxLayout(self.left_player_group)
+        self.right_player_group = QGroupBox("Right Player")
+        right_player_layout = QVBoxLayout(self.right_player_group)
+
+        self.left_player_buttons, self.right_player_buttons = [], []
+
+        # Left Player Buttons
+        human_left_radio = QRadioButton("Human")
+        human_left_radio.setChecked(True)
+        self.left_player_buttons.append({"name": "Human", "radio": human_left_radio})
+        left_player_layout.addWidget(human_left_radio)
+        for agent in agent_players:
+            radio = QRadioButton(agent["name"])
+            self.left_player_buttons.append({"name": agent["name"], "radio": radio})
+            left_player_layout.addWidget(radio)
+
+        # Right Player Buttons
+        human_right_radio = QRadioButton("Human")
+        self.right_player_buttons.append({"name": "Human", "radio": human_right_radio})
+        right_player_layout.addWidget(human_right_radio)
+        for i, agent in enumerate(agent_players):
+            radio = QRadioButton(agent["name"])
+            if i == 0:
+                radio.setChecked(True)  # Default to first AI
+            self.right_player_buttons.append({"name": agent["name"], "radio": radio})
+            right_player_layout.addWidget(radio)
+
+        left_player_layout.addStretch()
+        right_player_layout.addStretch()
+        player_selection_layout.addWidget(self.left_player_group)
+        player_selection_layout.addWidget(self.right_player_group)
+        main_layout.addLayout(player_selection_layout)
+
+        # --- First Player Selection ---
+        first_player_group = QGroupBox("First Player (Black)")
+        first_player_layout = QHBoxLayout(first_player_group)
+        self.first_player_left = QRadioButton("Left Player")
+        self.first_player_right = QRadioButton("Right Player")
+        self.first_player_random = QRadioButton("Random")
+        self.first_player_left.setChecked(True)
+        first_player_layout.addWidget(self.first_player_left)
+        first_player_layout.addWidget(self.first_player_right)
+        first_player_layout.addWidget(self.first_player_random)
+        main_layout.addWidget(first_player_group)
+
+        # --- Rules ---
         rules_group = QGroupBox("Game Rules")
-        rules_layout = QHBoxLayout(rules_group)
+        rules_layout = QVBoxLayout(rules_group)
         self.banned_checkbox = QCheckBox("Enable Banned Moves (Renju Rules)")
-        self.banned_checkbox.setToolTip(
-            "Forbids Black from making Three-Three, Four-Four, and Overline moves."
+        self.swap2_checkbox = QCheckBox("Enable Swap2 Opening Rule")
+        self.swap2_checkbox.setToolTip(
+            "A fair opening rule. Player 1 places 3 stones, Player 2 chooses a side or places 2 more."
         )
         rules_layout.addWidget(self.banned_checkbox)
+        rules_layout.addWidget(self.swap2_checkbox)
         main_layout.addWidget(rules_group)
 
-        columns_layout = QHBoxLayout()
-        player1_group = QGroupBox("Player 1 (Black)")
-        player1_layout = QVBoxLayout(player1_group)
-        self.player1_buttons = []
-        human1_radio = QRadioButton("Human")
-        human1_radio.setChecked(True)
-        self.player1_buttons.append({"name": "Human", "radio": human1_radio})
-        player1_layout.addWidget(human1_radio)
-        for i, agent in enumerate(agent_players):
-            radio_button = QRadioButton(agent["name"])
-            self.player1_buttons.append({"name": f"AI_{i}", "radio": radio_button})
-            player1_layout.addWidget(radio_button)
-        player1_layout.addStretch()
-        columns_layout.addWidget(player1_group)
-
-        player2_group = QGroupBox("Player 2 (White)")
-        player2_layout = QVBoxLayout(player2_group)
-        self.player2_buttons = []
-        for i, agent in enumerate(agent_players):
-            radio_button = QRadioButton(agent["name"])
-            if i == 2:
-                radio_button.setChecked(True)
-            self.player2_buttons.append({"name": f"AI_{i}", "radio": radio_button})
-            player2_layout.addWidget(radio_button)
-        player2_layout.addStretch()
-        columns_layout.addWidget(player2_group)
-        main_layout.addLayout(columns_layout)
-
+        # --- Dialog Buttons ---
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         main_layout.addWidget(self.button_box)
+        self.swap2_checkbox.toggled.connect(self.on_swap2_toggled)
+
+    def on_swap2_toggled(self, checked):
+        if checked:
+            self.banned_checkbox.setChecked(True)
+            self.banned_checkbox.setEnabled(False)
+        else:
+            self.banned_checkbox.setEnabled(True)
 
     def get_settings(self):
-        p1_selection, p2_selection = None, None
-        for i, button_info in enumerate(self.player1_buttons):
-            if button_info["radio"].isChecked():
-                p1_selection = -1 if button_info["name"] == "Human" else i - 1
-                break
-        for i, button_info in enumerate(self.player2_buttons):
-            if button_info["radio"].isChecked():
-                p2_selection = -1 if button_info["name"] == "Human" else i
-                break
+        left_player_name = next(
+            b["name"] for b in self.left_player_buttons if b["radio"].isChecked()
+        )
+        right_player_name = next(
+            b["name"] for b in self.right_player_buttons if b["radio"].isChecked()
+        )
+
+        first_player = "Left"
+        if self.first_player_right.isChecked():
+            first_player = "Right"
+        elif self.first_player_random.isChecked():
+            first_player = "Random"
 
         return {
-            "p1_index": p1_selection,
-            "p2_index": p2_selection,
-            "banned_moves_enabled": self.banned_checkbox.isChecked(),
+            "left_player": left_player_name,
+            "right_player": right_player_name,
+            "first_player": first_player,
+            "rules": {
+                "banned_moves_enabled": self.banned_checkbox.isChecked(),
+                "swap2_enabled": self.swap2_checkbox.isChecked(),
+            },
         }
 
 
@@ -632,7 +817,7 @@ class GomokuApp(QMainWindow):
             },
         ]
         self.agent_handler = None
-        self.players = {1: None, 2: None}
+        self.player_configs = {1: None, 2: None}
         self.game_settings = {}
 
     def _create_menu(self):
@@ -651,8 +836,21 @@ class GomokuApp(QMainWindow):
 
     def start_game_loop(self):
         self.stop_game_loop()
-        self.agent_handler = GomokuAgentHandler(self.game_engine.canvas, self.players)
-        self.agent_handler.movedSignal.connect(self.game_engine.agent_move)
+        if not self.player_configs[1] and not self.player_configs[2]:
+            return
+        self.agent_handler = GomokuAgentHandler(
+            self.game_engine.canvas, self.player_configs
+        )
+        # BUG FIX: Connect to the new agent_place_stone method
+        self.agent_handler.movedSignal.connect(
+            self.game_engine.canvas.agent_place_stone
+        )
+        self.agent_handler.p2ChoiceSignal.connect(
+            self.game_engine.canvas.handle_p2_choice
+        )
+        self.agent_handler.p1ChoiceSignal.connect(
+            self.game_engine.canvas.handle_p1_final_choice
+        )
         self.agent_handler.reconnectSignal.connect(
             self.game_engine.reconnectstatus_show
         )
@@ -668,34 +866,47 @@ class GomokuApp(QMainWindow):
 
     def prompt_new_game(self):
         self.stop_game_loop()
-
         dialog = NewGameDialog(self.agent_players_config, parent=self)
         if dialog.exec_():
             self.game_settings = dialog.get_settings()
-            p1_index = self.game_settings["p1_index"]
-            p2_index = self.game_settings["p2_index"]
 
-            self.players[1] = (
-                None if p1_index == -1 else self.agent_players_config[p1_index]
-            )
-            self.players[2] = (
-                None if p2_index == -1 else self.agent_players_config[p2_index]
-            )
+            name_to_config = {cfg["name"]: cfg for cfg in self.agent_players_config}
+            left_config = name_to_config.get(self.game_settings["left_player"])
+            right_config = name_to_config.get(self.game_settings["right_player"])
 
-            self.game_engine.reset_game(
-                self.players, self.game_settings["banned_moves_enabled"]
-            )
+            first_player_choice = self.game_settings["first_player"]
+            if first_player_choice == "Random":
+                first_player_choice = random.choice(["Left", "Right"])
+
+            if first_player_choice == "Left":
+                p1_name, p2_name = (
+                    self.game_settings["left_player"],
+                    self.game_settings["right_player"],
+                )
+                p1_config, p2_config = left_config, right_config
+            else:  # Right
+                p1_name, p2_name = (
+                    self.game_settings["right_player"],
+                    self.game_settings["left_player"],
+                )
+                p1_config, p2_config = right_config, left_config
+
+            final_player_names = {1: p1_name, 2: p2_name}
+            self.player_configs = {1: p1_config, 2: p2_config}
+
+            self.game_engine.reset_game(final_player_names, self.game_settings["rules"])
             self.start_game_loop()
 
-    def gameover_assert(self, winner: int):
-        self.save_game_history(winner)
+    def gameover_assert(self, winner_id: int):
+        self.stop_game_loop()
+        self.save_game_history(winner_id)
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Game Over")
+
         winner_name = "No one"
-        if winner in self.players:
-            winner_name = (
-                self.players[winner]["name"] if self.players[winner] else "Human"
-            )
+        if winner_id is not None:
+            winner_name = self.game_engine.canvas.player_names.get(winner_id, "Unknown")
+
         msg_box.setText(f"<h2>{winner_name} Wins!</h2>")
         msg_box.setInformativeText("What would you like to do next?")
         msg_box.setIcon(QMessageBox.Icon.Question)
@@ -710,15 +921,15 @@ class GomokuApp(QMainWindow):
 
     def rules_description(self):
         rules_text = """
-            <h3>Freestyle Rules:</h3>
-            The first player to get an unbroken row of five stones wins.<br>
-            <h3>Renju Rules (Banned Moves Enabled):</h3>
-            To balance the game, the Black player (first player) cannot make moves that create:<br>
-            - <b>Three-Three:</b> Two open lines of three stones simultaneously.<br>
-            - <b>Four-Four:</b> Two lines of four stones simultaneously.<br>
-            - <b>Overline:</b> A line of six or more stones. This results in a loss for Black.<br>
-            <br><i>These restrictions do not apply to the White player.</i>
-        """
+            <h3>Freestyle Rules:</h3> The first player to get an unbroken row of five stones wins.<br>
+            <h3>Renju Rules (Banned Moves Enabled):</h3> To balance the game, the Black player (first player) cannot make moves that create:<br>
+            - <b>Three-Three, Four-Four, or Overline.</b><br>
+            <h3>Swap2 Opening Rule:</h3> A fair opening protocol:<br>
+            1. Player 1 places 2 black stones and 1 white stone.<br>
+            2. Player 2 can: (a) Take Black, (b) Take White, or (c) Place 2 more stones and pass the choice back.<br>
+            3. If (c), Player 1 chooses their final color.<br>
+            <br><i>Swap2 is always played with Renju rules.</i>
+            """
         QMessageBox.information(self, "Gomoku Rules", rules_text)
 
     def agent_gameover_handler(self, message: str):
@@ -732,33 +943,33 @@ class GomokuApp(QMainWindow):
         self.game_engine.resume_button.hide()
         self.game_engine.info_label.setText(f"<i>{message}</i>")
 
-    def save_game_history(self, winner_player_id):
+    def save_game_history(self, winner_id):
         if not os.path.exists("game_history"):
             os.makedirs("game_history")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"./game_history/game_{timestamp}.json"
-        p1_name = self.players[1]["name"] if self.players[1] else "Human"
-        p2_name = self.players[2]["name"] if self.players[2] else "Human"
+
+        player_names = self.game_engine.canvas.player_names
         winner_name = "None"
-        if winner_player_id in self.players:
-            winner_name = (
-                self.players[winner_player_id]["name"]
-                if self.players[winner_player_id]
-                else "Human"
-            )
+        if winner_id is not None:
+            winner_name = player_names.get(winner_id, "Unknown")
 
         history_data = {
             "game_id": timestamp,
-            "winner_player_id": winner_player_id,
+            "winner_id": winner_id,
             "winner_name": winner_name,
-            "players": {"1": {"type": p1_name}, "2": {"type": p2_name}},
-            "rules": self.game_settings,
+            "player_setup": {
+                "p1_name": player_names[1],
+                "p2_name": player_names[2],
+            },
+            "final_colors": self.game_engine.canvas.player_colors,
+            "rules": self.game_settings.get("rules", {}),
             "move_history": self.game_engine.canvas.move_history,
         }
         try:
             with open(filename, "w") as f:
                 json.dump(history_data, f, indent=4)
-            print(f"Game history saved to {filename}")
+            print(f"Error saving game history: {filename}")
         except Exception as e:
             print(f"Error saving game history: {e}")
 

@@ -5,15 +5,23 @@ app = Flask(__name__)
 GRID_SIZE = 15
 
 
-# --- Banned Move Logic (Copied from main app for self-containment) ---
+# GamePhase class is defined for clarity, though RandomAgent doesn't use it for complex logic.
+class GamePhase:
+    NORMAL = 0
+    SWAP2_P1_PLACE_3 = 1
+    SWAP2_P2_CHOOSE_ACTION = 2
+    SWAP2_P2_PLACE_2 = 3
+    SWAP2_P1_CHOOSE_COLOR = 4
+
+
+# --- Banned Move Logic (Synchronized with main app and baseline agent) ---
 def _get_char(board, r, c):
     if 0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE:
         return board[r][c]
-    return -1  # Represents board edge
+    return -1
 
 
-def _check_overline(board, r, c):
-    p = board[r][c]
+def _check_overline(board, r, c, p):
     for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
         count = 1
         for i in range(1, 6):
@@ -34,31 +42,25 @@ def _check_overline(board, r, c):
 def _is_banned_move(board, r, c):
     if board[r][c] != 0:
         return False
-
-    board[r][c] = 1  # Temporarily place the stone
-
-    if _check_overline(board, r, c):
+    board[r][c] = 1
+    if _check_overline(board, r, c, 1):
         board[r][c] = 0
         return True
-
     threes, fours = 0, 0
     for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
         line_str = "".join(
             map(str, [_get_char(board, r + i * dr, c + i * dc) for i in range(-4, 5)])
         )
-        # Replace opponent stones with a non-interfering character for pattern matching
-        line_str = line_str.replace("2", "X")
-
+        # This logic is now identical to the baseline agent and main app's logic.
+        line_str = line_str.replace("2", "0")
         if "01110" in line_str:
             threes += 1
         if "1111" in line_str:
             fours += 1
-
-    board[r][c] = 0  # Reset the board
+    board[r][c] = 0
     return threes >= 2 or fours >= 2
 
 
-# --- API Endpoint ---
 @app.route("/get_move", methods=["POST"])
 def get_move():
     data = request.get_json()
@@ -66,34 +68,40 @@ def get_move():
         return jsonify({"error": "Invalid input"}), 400
 
     board = data["board"]
-    player = data.get("player")
+    color_to_play = data.get("color_to_play")
     banned_moves_enabled = data.get("banned_moves_enabled", False)
+    game_phase = data.get("game_phase")
 
-    empty_cells = []
-    for r in range(len(board)):
-        for c in range(len(board[r])):
-            if board[r][c] == 0:
-                empty_cells.append((r, c))
+    # --- Handle Swap2 Choices ---
+    if game_phase == "P2_CHOOSE":
+        choices = ["TAKE_BLACK", "TAKE_WHITE", "PLACE_2"]
+        return jsonify({"choice": random.choice(choices)})
+    if game_phase == "P1_CHOOSE":
+        choices = ["CHOOSE_BLACK", "CHOOSE_WHITE"]
+        return jsonify({"choice": random.choice(choices)})
 
+    # --- Handle All Move Placements ---
+    empty_cells = [
+        (r, c) for r in range(GRID_SIZE) for c in range(GRID_SIZE) if board[r][c] == 0
+    ]
     if not empty_cells:
-        return jsonify({"move": None, "message": "Board is full"}), 200
+        return jsonify({"move": None, "message": "Board is full"})
 
-    valid_moves = []
-    # If it's Black's turn and banned moves are on, filter the moves
-    if player == 1 and banned_moves_enabled:
-        for r, c in empty_cells:
-            if not _is_banned_move(board, r, c):
-                valid_moves.append((r, c))
+    # Filter out banned moves if applicable
+    if color_to_play == 1 and banned_moves_enabled:
+        valid_moves = [m for m in empty_cells if not _is_banned_move(board, m[0], m[1])]
+        # If all moves are banned, it's a loss for black, but for robustness,
+        # we allow it to make a move from any empty cell to prevent a crash.
+        if not valid_moves:
+            valid_moves = empty_cells
     else:
         valid_moves = empty_cells
 
     if valid_moves:
-        chosen_move = random.choice(valid_moves)
-        print(f"Random Strategy chose: {chosen_move}")
-        return jsonify({"move": chosen_move})
+        return jsonify({"move": random.choice(valid_moves)})
     else:
-        # This can happen if all available moves are banned
-        return jsonify({"move": random.choice(empty_cells)})
+        # This case should ideally not be reached.
+        return jsonify({"move": None, "message": "No valid moves available"})
 
 
 if __name__ == "__main__":
