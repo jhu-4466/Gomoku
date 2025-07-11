@@ -718,9 +718,9 @@ class NewGameDialog(QDialog):
             left_player_layout.addWidget(radio)
 
         # Right Player Buttons
-        human_right_radio = QRadioButton("Human")
-        self.right_player_buttons.append({"name": "Human", "radio": human_right_radio})
-        right_player_layout.addWidget(human_right_radio)
+        # human_right_radio = QRadioButton("Human")
+        # self.right_player_buttons.append({"name": "Human", "radio": human_right_radio})
+        # right_player_layout.addWidget(human_right_radio)
         for i, agent in enumerate(agent_players):
             radio = QRadioButton(agent["name"])
             if i == 0:
