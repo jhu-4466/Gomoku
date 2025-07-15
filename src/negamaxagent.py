@@ -51,7 +51,6 @@ SCORE_TABLE = {
 app = Flask(__name__)
 opening_book = []
 try:
-    # Use the correct filename 'josekis.json' as provided by the user
     with open("josekis.json", "r", encoding="utf-8") as f:
         opening_book = json.load(f)
     print("Opening book 'josekis.json' loaded successfully.")
@@ -67,7 +66,7 @@ zobrist_table = np.random.randint(
 )
 
 
-class GomokuAgent:
+class NegamaxAgent:
     def __init__(self, board_size=15):
         self.board_size = board_size
         self.transposition_table = {}
@@ -325,7 +324,7 @@ class GomokuAgent:
 
 
 # --- Flask HTTP Server ---
-agent = GomokuAgent(GRID_SIZE)
+agent = NegamaxAgent(GRID_SIZE)
 
 
 @app.route("/get_move", methods=["POST"])
