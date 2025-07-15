@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -13,6 +14,8 @@ from PyQt5.QtWidgets import (
     QLabel,
     QPushButton,
     QCheckBox,
+    QSpinBox,
+    QFormLayout,
 )
 from PyQt5.QtGui import QImage, QPainter, QFont, QColor
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QThread
@@ -27,6 +30,7 @@ import random
 import time
 import json
 from datetime import datetime
+from collections import defaultdict
 
 
 # Board attributes (15x15)
@@ -40,6 +44,7 @@ BOARD_HEIGHT = BOARD_WIDTH
 INFO_BAR_HEIGHT = 50
 
 # Colors
+# 1 - Black, 2 - White
 COLOR_BOARD = (230, 200, 150)
 COLOR_BLACK = (0, 0, 0)
 COLOR_WHITE = (255, 255, 255)
@@ -96,6 +101,7 @@ class GomokuCanvas(QWidget):
         self.winner_id = None
         self.move_history = []
         self.is_in_game = False
+        self.batch_info = None
 
         # --- Player and Color Mapping ---
         self.player_names = {1: "Player 1", 2: "Player 2"}  # Static map of ID to name
@@ -157,6 +163,7 @@ class GomokuCanvas(QWidget):
 
         self.banned_moves_enabled = rules.get("banned_moves_enabled", False)
         self.swap2_enabled = rules.get("swap2_enabled", False)
+        self.batch_info = rules.get("batch_info", None)
 
         if self.swap2_enabled:
             self.game_phase = GamePhase.SWAP2_P1_PLACE_3
@@ -190,15 +197,14 @@ class GomokuCanvas(QWidget):
         ]:
             self.handle_swap2_placement(row, col)
 
-    # BUG FIX: New method to correctly route agent moves
-    def agent_place_stone(self, row, col):
+    def agent_place_stone(self, row, col, thinking_time):
         """Public method for the agent handler to place a stone."""
         if self.game_phase in [GamePhase.SWAP2_P1_PLACE_3, GamePhase.SWAP2_P2_PLACE_2]:
-            self.handle_swap2_placement(row, col)
+            self.handle_swap2_placement(row, col, thinking_time)
         else:  # Assumes GamePhase.NORMAL
-            self.handle_normal_move(row, col)
+            self.handle_normal_move(row, col, thinking_time=thinking_time)
 
-    def handle_swap2_placement(self, row, col):
+    def handle_swap2_placement(self, row, col, thinking_time=None):
         if not self.swap2_stones_to_place:
             print("Warning: handle_swap2_placement called with no stones to place.")
             return
@@ -206,16 +212,18 @@ class GomokuCanvas(QWidget):
         stone_color = self.swap2_stones_to_place.pop(0)
         self.board[row][col] = stone_color
 
-        # Determine which player is making the move for history
         turn_player_id = 1 if self.game_phase == GamePhase.SWAP2_P1_PLACE_3 else 2
-        self.move_history.append(
-            {
-                "turn": len(self.move_history) + 1,
-                "player_id": turn_player_id,
-                "move": (row, col),
-                "color": stone_color,
-            }
-        )
+
+        move_data = {
+            "turn": len(self.move_history) + 1,
+            "player_id": turn_player_id,
+            "move": (row, col),
+            "color": stone_color,
+        }
+        if thinking_time is not None:
+            move_data["thinking_time"] = round(thinking_time, 4)
+        self.move_history.append(move_data)
+
         self.update()
 
         if not self.swap2_stones_to_place:
@@ -254,7 +262,7 @@ class GomokuCanvas(QWidget):
         self.game_phase = GamePhase.NORMAL
         self.state_change()
 
-    def handle_normal_move(self, row, col):
+    def handle_normal_move(self, row, col, thinking_time=None):
         if self.board[row][col] != 0:
             print(
                 f"Warning: Attempted to place piece on occupied cell ({row}, {col}). Ignoring."
@@ -274,16 +282,17 @@ class GomokuCanvas(QWidget):
                 )
                 return
 
-        # Place piece and check for win/end of game
         self.board[row][col] = color_to_play
-        self.move_history.append(
-            {
-                "turn": len(self.move_history) + 1,
-                "player_id": self.current_player_id,
-                "move": (row, col),
-                "color": color_to_play,
-            }
-        )
+
+        move_data = {
+            "turn": len(self.move_history) + 1,
+            "player_id": self.current_player_id,
+            "move": (row, col),
+            "color": color_to_play,
+        }
+        if thinking_time is not None:
+            move_data["thinking_time"] = round(thinking_time, 4)
+        self.move_history.append(move_data)
 
         if self.check_win(row, col, color_to_play):
             self.game_over = True
@@ -306,7 +315,7 @@ class GomokuCanvas(QWidget):
         self.update()
 
     def get_current_state(self):
-        return {
+        state = {
             "player_names": self.player_names,
             "player_colors": self.player_colors,
             "current_player_id": self.current_player_id,
@@ -316,6 +325,9 @@ class GomokuCanvas(QWidget):
             "game_phase": self.game_phase,
             "swap2_stones_to_place": self.swap2_stones_to_place,
         }
+        if self.batch_info:
+            state["batch_info"] = self.batch_info
+        return state
 
     def mouseMoveEvent(self, event):
         color_to_play = self.player_colors.get(self.current_player_id, 1)
@@ -492,30 +504,44 @@ class GomokuBoard(QWidget):
         self.canvas.requestP1ColorChoiceSignal.connect(self.prompt_p1_color_choice)
 
     def update_info_bar(self, state: dict):
-        if self.is_paused:
-            text = "<i>Game Paused</i>"
-        elif state["game_over"]:
-            winner_name = "No one"
-            if state["winner_id"] is not None:
-                winner_name = state["player_names"].get(state["winner_id"], "Unknown")
-            text = f"<b>Game Over! Winner is {winner_name}.</b>"
-            self.pause_button.hide()
-        elif state["game_phase"] != GamePhase.NORMAL:
-            text = self.get_swap2_info_text(state)
-            self.pause_button.hide()
-        else:
-            p1_name = state["player_names"][1]
-            p2_name = state["player_names"][2]
-            p1_color_str = "Black" if state["player_colors"][1] == 1 else "White"
-            p2_color_str = "Black" if state["player_colors"][2] == 1 else "White"
-            current_player_id = state["current_player_id"]
-            current_player_color_str = (
-                "Black" if state["player_colors"][current_player_id] == 1 else "White"
+        batch_info = state.get("batch_info")
+        batch_text = ""
+        if batch_info:
+            batch_text = (
+                f"[Batch Game {batch_info['current']} of {batch_info['total']}] "
             )
 
-            text = f"<b>{p1_name} ({p1_color_str})</b> vs <b>{p2_name} ({p2_color_str})</b> | Turn {state['move_count'] + 1}: <b>{current_player_color_str}</b> to move"
-            self.pause_button.show()
-        self.info_label.setText(text)
+        if self.is_paused:
+            text = f"{batch_text}<i>Game Paused</i>"
+            self.pause_button.hide()
+            self.resume_button.show()
+        else:
+            self.resume_button.hide()
+            if state["game_over"]:
+                winner_name = "No one"
+                if state["winner_id"] is not None:
+                    winner_name = state["player_names"].get(
+                        state["winner_id"], "Unknown"
+                    )
+                text = f"{batch_text}<b>Game Over! Winner is {winner_name}.</b>"
+                self.pause_button.hide()
+            elif state["game_phase"] != GamePhase.NORMAL:
+                text = f"{batch_text}{self.get_swap2_info_text(state)}"
+                self.pause_button.hide()
+            else:
+                p1_name = state["player_names"][1]
+                p2_name = state["player_names"][2]
+                p1_color_str = "Black" if state["player_colors"][1] == 1 else "White"
+                p2_color_str = "Black" if state["player_colors"][2] == 1 else "White"
+                current_player_id = state["current_player_id"]
+                current_player_color_str = (
+                    "Black"
+                    if state["player_colors"][current_player_id] == 1
+                    else "White"
+                )
+
+                text = f"{batch_text}<b>{p1_name} ({p1_color_str})</b> vs <b>{p2_name} ({p2_color_str})</b> | Turn {state['move_count'] + 1}: <b>{current_player_color_str}</b> to move"
+                self.pause_button.show()
         self.info_label.setText(text)
 
     def get_swap2_info_text(self, state):
@@ -582,53 +608,55 @@ class GomokuBoard(QWidget):
 
 
 class GomokuAgentHandler(QThread):
-    movedSignal = pyqtSignal(int, int)
+    movedSignal = pyqtSignal(int, int, float)
     p2ChoiceSignal = pyqtSignal(str)
     p1ChoiceSignal = pyqtSignal(str)
     reconnectSignal = pyqtSignal(str)
     gameOverSignal = pyqtSignal(str)
 
-    def __init__(self, game_canvas, player_configs):
+    def __init__(self, game_engine, player_configs):
         super().__init__()
-        self.game_canvas = game_canvas
+        self.game_engine = game_engine  # MODIFIED: Hold reference to the whole engine
         self.player_configs = player_configs
         self.running = True
 
     def run(self):
-        while self.running and not self.game_canvas.game_over:
-            if not self.running:
-                break
+        while self.running:
+            # MODIFIED: Pause check is now the first thing in the loop
+            if self.game_engine.is_paused or self.game_engine.canvas.game_over:
+                self.msleep(200)  # Sleep while paused or game is over
+                continue
 
-            state = self.game_canvas.get_current_state()
+            state = self.game_engine.canvas.get_current_state()
             player_id = state["current_player_id"]
-            player_name = state["player_names"][player_id]
+            player_name = state["player_names"].get(player_id)
 
-            if player_name == "Human":
+            if player_name == "Human" or player_name is None:
                 self.msleep(100)
                 continue
 
-            player_config = self.player_configs[player_id]
+            player_config = self.player_configs.get(player_id)
+            if not player_config:
+                self.msleep(100)
+                continue
+
             game_phase = state["game_phase"]
 
-            # AI Action Logic
             if game_phase == GamePhase.SWAP2_P2_CHOOSE_ACTION and player_id == 2:
                 self.get_ai_swap2_choice(player_config, state, "P2_CHOOSE")
             elif game_phase == GamePhase.SWAP2_P1_CHOOSE_COLOR and player_id == 1:
                 self.get_ai_swap2_choice(player_config, state, "P1_CHOOSE")
             else:
-                # All other phases are move-making phases for the current player
                 self.get_ai_move(player_config, state)
 
-            if self.game_canvas.game_over:
-                break
-            # Add a small delay to make AI moves more observable
-            self.msleep(300)
+            self.msleep(100)  # Shorter sleep, as the pause logic handles waiting
 
     def get_ai_swap2_choice(self, player_config, state, choice_type):
         payload = self.build_payload(state)
         payload["game_phase"] = choice_type
 
-        choice = self.make_request(player_config, payload).get("choice")
+        response_data, _ = self.make_request(player_config, payload)
+        choice = response_data.get("choice")
 
         if choice and self.running:
             if choice_type == "P2_CHOOSE":
@@ -638,41 +666,46 @@ class GomokuAgentHandler(QThread):
 
     def get_ai_move(self, player_config, state):
         payload = self.build_payload(state)
-        move = self.make_request(player_config, payload).get("move")
+        response_data, thinking_time = self.make_request(player_config, payload)
+        move = response_data.get("move")
 
         if move and self.running:
             row, col = move[0], move[1]
-            if self.game_canvas.board[row][col] != 0:
+            if self.game_engine.canvas.board[row][col] != 0:
                 print(
                     f"Error: AI from {player_config['url']} returned an occupied cell {move}."
                 )
                 self.gameOverSignal.emit(f"Error: AI returned invalid move.")
                 return
-            self.movedSignal.emit(row, col)
+            self.movedSignal.emit(row, col, thinking_time)
 
     def build_payload(self, state):
         player_id = state["current_player_id"]
         return {
-            "board": self.game_canvas.board,
+            "board": self.game_engine.canvas.board,
             "player_id": player_id,
             "color_to_play": state["player_colors"][player_id],
-            "banned_moves_enabled": self.game_canvas.banned_moves_enabled,
+            "banned_moves_enabled": self.game_engine.canvas.banned_moves_enabled,
             "game_phase": state["game_phase"],
-            "move_history": self.game_canvas.move_history,
+            "move_history": self.game_engine.canvas.move_history,
         }
 
     def make_request(self, player_config, payload):
         player_url = player_config["url"]
-        player_timeout = player_config.get("timeout", 5)
+        player_timeout = player_config.get("timeout", 10)
         for attempt in range(MAX_RETRIES):
             if not self.running:
-                return {}
+                return {}, 0.0
             try:
+                start_time = time.time()
                 response = requests.post(
                     player_url, json=payload, timeout=player_timeout
                 )
+                end_time = time.time()
+                thinking_time = end_time - start_time
+
                 response.raise_for_status()
-                return response.json()
+                return response.json(), thinking_time
             except requests.RequestException as e:
                 print(f"Request failed for {player_config['name']}: {e}")
                 if attempt < MAX_RETRIES - 1:
@@ -686,7 +719,7 @@ class GomokuAgentHandler(QThread):
                         f"Error: Cannot connect to {player_config['name']}."
                     )
                     self.running = False
-        return {}
+        return {}, 0.0
 
     def stop(self):
         self.running = False
@@ -698,7 +731,6 @@ class NewGameDialog(QDialog):
         self.setWindowTitle("Start a New Game")
         main_layout = QVBoxLayout(self)
 
-        # --- Player Selection ---
         player_selection_layout = QHBoxLayout()
         self.left_player_group = QGroupBox("Left Player")
         left_player_layout = QVBoxLayout(self.left_player_group)
@@ -707,7 +739,6 @@ class NewGameDialog(QDialog):
 
         self.left_player_buttons, self.right_player_buttons = [], []
 
-        # Left Player Buttons
         human_left_radio = QRadioButton("Human")
         human_left_radio.setChecked(True)
         self.left_player_buttons.append({"name": "Human", "radio": human_left_radio})
@@ -717,14 +748,13 @@ class NewGameDialog(QDialog):
             self.left_player_buttons.append({"name": agent["name"], "radio": radio})
             left_player_layout.addWidget(radio)
 
-        # Right Player Buttons
-        # human_right_radio = QRadioButton("Human")
-        # self.right_player_buttons.append({"name": "Human", "radio": human_right_radio})
-        # right_player_layout.addWidget(human_right_radio)
+        human_right_radio = QRadioButton("Human")
+        self.right_player_buttons.append({"name": "Human", "radio": human_right_radio})
+        right_player_layout.addWidget(human_right_radio)
         for i, agent in enumerate(agent_players):
             radio = QRadioButton(agent["name"])
             if i == 0:
-                radio.setChecked(True)  # Default to first AI
+                radio.setChecked(True)
             self.right_player_buttons.append({"name": agent["name"], "radio": radio})
             right_player_layout.addWidget(radio)
 
@@ -734,7 +764,6 @@ class NewGameDialog(QDialog):
         player_selection_layout.addWidget(self.right_player_group)
         main_layout.addLayout(player_selection_layout)
 
-        # --- First Player Selection ---
         first_player_group = QGroupBox("First Player (Black)")
         first_player_layout = QHBoxLayout(first_player_group)
         self.first_player_left = QRadioButton("Left Player")
@@ -746,26 +775,45 @@ class NewGameDialog(QDialog):
         first_player_layout.addWidget(self.first_player_random)
         main_layout.addWidget(first_player_group)
 
-        # --- Rules ---
         rules_group = QGroupBox("Game Rules")
         rules_layout = QVBoxLayout(rules_group)
         self.banned_checkbox = QCheckBox("Enable Banned Moves (Renju Rules)")
         self.swap2_checkbox = QCheckBox("Enable Swap2 Opening Rule")
-        self.swap2_checkbox.setToolTip(
-            "A fair opening rule. Player 1 places 3 stones, Player 2 chooses a side or places 2 more."
-        )
         rules_layout.addWidget(self.banned_checkbox)
         rules_layout.addWidget(self.swap2_checkbox)
         main_layout.addWidget(rules_group)
 
-        # --- Dialog Buttons ---
+        self.batch_group = QGroupBox("Batch Play")
+        batch_layout = QFormLayout(self.batch_group)
+        self.num_games_spinbox = QSpinBox()
+        self.num_games_spinbox.setMinimum(1)
+        self.num_games_spinbox.setMaximum(1000)
+        self.num_games_spinbox.setValue(1)
+        batch_layout.addRow("Number of Games:", self.num_games_spinbox)
+        main_layout.addWidget(self.batch_group)
+        self.batch_group.setEnabled(False)
+
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         main_layout.addWidget(self.button_box)
+
         self.swap2_checkbox.toggled.connect(self.on_swap2_toggled)
+        for btn_data in self.left_player_buttons:
+            btn_data["radio"].toggled.connect(self.update_batch_mode_availability)
+        for btn_data in self.right_player_buttons:
+            btn_data["radio"].toggled.connect(self.update_batch_mode_availability)
+        self.update_batch_mode_availability()
+
+    def update_batch_mode_availability(self):
+        left_is_human = self.left_player_buttons[0]["radio"].isChecked()
+        right_is_human = self.right_player_buttons[0]["radio"].isChecked()
+        is_ai_vs_ai = not left_is_human and not right_is_human
+        self.batch_group.setEnabled(is_ai_vs_ai)
+        if not is_ai_vs_ai:
+            self.num_games_spinbox.setValue(1)
 
     def on_swap2_toggled(self, checked):
         if checked:
@@ -796,6 +844,7 @@ class NewGameDialog(QDialog):
                 "banned_moves_enabled": self.banned_checkbox.isChecked(),
                 "swap2_enabled": self.swap2_checkbox.isChecked(),
             },
+            "num_games": self.num_games_spinbox.value(),
         }
 
 
@@ -805,20 +854,20 @@ class GomokuApp(QMainWindow):
         self.setWindowTitle("Gomoku / Renju")
         self.game_engine = GomokuBoard(self)
         self.setCentralWidget(self.game_engine)
-        self.game_engine.gameOverSignal.connect(self.gameover_assert)
+        self.game_engine.gameOverSignal.connect(self.gameover_handler)
         self._create_menu()
         self.agent_players_config = [
             {"name": "Random Strategy", "url": "http://127.0.0.1:5001/get_move"},
             {"name": "Baseline Strategy", "url": "http://127.0.0.1:5002/get_move"},
-            {
-                "name": "Negamax AI",
-                "url": "http://127.0.0.1:5003/get_move",
-                "timeout": 180,
-            },
+            {"name": "Negamax AI", "url": "http://127.0.0.1:5003/get_move"},
         ]
         self.agent_handler = None
         self.player_configs = {1: None, 2: None}
         self.game_settings = {}
+        self.is_batch_mode = False
+        self.batch_total_games = 0
+        self.batch_current_game = 0
+        self.batch_results = defaultdict(int)
 
     def _create_menu(self):
         menu_bar = self.menuBar()
@@ -836,12 +885,12 @@ class GomokuApp(QMainWindow):
 
     def start_game_loop(self):
         self.stop_game_loop()
-        if not self.player_configs[1] and not self.player_configs[2]:
+        is_p1_ai = self.player_configs[1] is not None
+        is_p2_ai = self.player_configs[2] is not None
+        if not is_p1_ai and not is_p2_ai:
             return
-        self.agent_handler = GomokuAgentHandler(
-            self.game_engine.canvas, self.player_configs
-        )
-        # BUG FIX: Connect to the new agent_place_stone method
+
+        self.agent_handler = GomokuAgentHandler(self.game_engine, self.player_configs)
         self.agent_handler.movedSignal.connect(
             self.game_engine.canvas.agent_place_stone
         )
@@ -869,55 +918,96 @@ class GomokuApp(QMainWindow):
         dialog = NewGameDialog(self.agent_players_config, parent=self)
         if dialog.exec_():
             self.game_settings = dialog.get_settings()
+            num_games = self.game_settings.get("num_games", 1)
+            left_is_human = self.game_settings["left_player"] == "Human"
+            right_is_human = self.game_settings["right_player"] == "Human"
 
-            name_to_config = {cfg["name"]: cfg for cfg in self.agent_players_config}
-            left_config = name_to_config.get(self.game_settings["left_player"])
-            right_config = name_to_config.get(self.game_settings["right_player"])
+            if num_games > 1 and not left_is_human and not right_is_human:
+                self.is_batch_mode = True
+                self.batch_total_games = num_games
+                self.batch_current_game = 1
+                self.batch_results.clear()
+                self.start_next_game_in_batch()
+            else:
+                self.is_batch_mode = False
+                self.start_single_game()
 
-            first_player_choice = self.game_settings["first_player"]
-            if first_player_choice == "Random":
-                first_player_choice = random.choice(["Left", "Right"])
+    def start_single_game(self):
+        self.setup_players_and_start()
 
-            if first_player_choice == "Left":
-                p1_name, p2_name = (
-                    self.game_settings["left_player"],
-                    self.game_settings["right_player"],
-                )
-                p1_config, p2_config = left_config, right_config
-            else:  # Right
-                p1_name, p2_name = (
-                    self.game_settings["right_player"],
-                    self.game_settings["left_player"],
-                )
-                p1_config, p2_config = right_config, left_config
+    def start_next_game_in_batch(self):
+        print(
+            f"\n--- Starting Batch Game {self.batch_current_game} of {self.batch_total_games} ---"
+        )
+        self.setup_players_and_start(is_batch=True)
 
-            final_player_names = {1: p1_name, 2: p2_name}
-            self.player_configs = {1: p1_config, 2: p2_config}
+    def setup_players_and_start(self, is_batch=False):
+        name_to_config = {cfg["name"]: cfg for cfg in self.agent_players_config}
+        left_config = name_to_config.get(self.game_settings["left_player"])
+        right_config = name_to_config.get(self.game_settings["right_player"])
 
-            self.game_engine.reset_game(final_player_names, self.game_settings["rules"])
-            self.start_game_loop()
+        first_player_choice = self.game_settings["first_player"]
+        if first_player_choice == "Random":
+            first_player_choice = random.choice(["Left", "Right"])
 
-    def gameover_assert(self, winner_id: int):
+        if first_player_choice == "Left":
+            p1_name, p2_name = (
+                self.game_settings["left_player"],
+                self.game_settings["right_player"],
+            )
+            p1_config, p2_config = left_config, right_config
+        else:
+            p1_name, p2_name = (
+                self.game_settings["right_player"],
+                self.game_settings["left_player"],
+            )
+            p1_config, p2_config = right_config, left_config
+
+        final_player_names = {1: p1_name, 2: p2_name}
+        self.player_configs = {1: p1_config, 2: p2_config}
+
+        rules = self.game_settings["rules"].copy()
+        if is_batch:
+            rules["batch_info"] = {
+                "current": self.batch_current_game,
+                "total": self.batch_total_games,
+            }
+
+        self.game_engine.reset_game(final_player_names, rules)
+        self.start_game_loop()
+
+    def gameover_handler(self, winner_id: int):
         self.stop_game_loop()
         self.save_game_history(winner_id)
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Game Over")
 
-        winner_name = "No one"
-        if winner_id is not None:
-            winner_name = self.game_engine.canvas.player_names.get(winner_id, "Unknown")
+        if self.is_batch_mode:
+            winner_name = self.game_engine.canvas.player_names.get(winner_id, "Draw")
+            self.batch_results[winner_name] += 1
 
-        msg_box.setText(f"<h2>{winner_name} Wins!</h2>")
-        msg_box.setInformativeText("What would you like to do next?")
-        msg_box.setIcon(QMessageBox.Icon.Question)
-        play_again_btn = msg_box.addButton(
-            "Play Again", QMessageBox.ButtonRole.AcceptRole
-        )
-        msg_box.addButton("Review Board", QMessageBox.ButtonRole.RejectRole)
-        msg_box.setDefaultButton(play_again_btn)
-        msg_box.exec_()
-        if msg_box.clickedButton() == play_again_btn:
-            self.prompt_new_game()
+            if self.batch_current_game < self.batch_total_games:
+                self.batch_current_game += 1
+                QTimer.singleShot(500, self.start_next_game_in_batch)
+            else:
+                self.is_batch_mode = False
+                summary_text = f"<h2>Batch of {self.batch_total_games} games complete!</h2><b>Results:</b><br>"
+                for name, wins in self.batch_results.items():
+                    summary_text += f"- {name}: {wins} wins<br>"
+                QMessageBox.information(self, "Batch Complete", summary_text)
+        else:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Game Over")
+            winner_name = self.game_engine.canvas.player_names.get(winner_id, "No one")
+            msg_box.setText(f"<h2>{winner_name} Wins!</h2>")
+            msg_box.setInformativeText("What would you like to do next?")
+            msg_box.setIcon(QMessageBox.Icon.Question)
+            play_again_btn = msg_box.addButton(
+                "Play Again", QMessageBox.ButtonRole.AcceptRole
+            )
+            msg_box.addButton("Review Board", QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(play_again_btn)
+            msg_box.exec_()
+            if msg_box.clickedButton() == play_again_btn:
+                self.prompt_new_game()
 
     def rules_description(self):
         rules_text = """
@@ -969,7 +1059,7 @@ class GomokuApp(QMainWindow):
         try:
             with open(filename, "w") as f:
                 json.dump(history_data, f, indent=4)
-            print(f"Error saving game history: {filename}")
+            print(f"Game history saved to: {filename}")
         except Exception as e:
             print(f"Error saving game history: {e}")
 
