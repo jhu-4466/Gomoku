@@ -1,0 +1,262 @@
+[
+  {
+    "name_cn": "花月",
+    "name_en": "Kagetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [6, 8, 1]
+    ]
+  },
+  {
+    "name_cn": "雨月",
+    "name_en": "Ugetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [7, 8, 1]
+    ]
+  },
+  {
+    "name_cn": "松月",
+    "name_en": "Shogetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [8, 7, 1]
+    ]
+  },
+  {
+    "name_cn": "溪月",
+    "name_en": "Keigetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [5, 8, 1]
+    ]
+  },
+  {
+    "name_cn": "寒星",
+    "name_en": "Kansei",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [5, 7, 1]
+    ]
+  },
+  {
+    "name_cn": "瑞星",
+    "name_en": "Zuisei",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [9, 7, 1]
+    ]
+  },
+  {
+    "name_cn": "金星",
+    "name_en": "Kinsei",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [7, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "浦月",
+    "name_en": "Uragetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [8, 8, 1]
+    ]
+  },
+  {
+    "name_cn": "云月",
+    "name_en": "Ungetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [7, 8, 1]
+    ]
+  },
+  {
+    "name_cn": "峡月",
+    "name_en": "Kyougetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [6, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "银月",
+    "name_en": "Gingetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [8, 7, 1]
+    ]
+  },
+  {
+    "name_cn": "岚月",
+    "name_en": "Rangetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [9, 8, 1]
+    ]
+  },
+  {
+    "name_cn": "名月",
+    "name_en": "Meigetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [9, 6, 1]
+    ]
+  },
+  {
+    "name_cn": "水月",
+    "name_en": "Suigetsu",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [8, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "恒星",
+    "name_en": "Kousei",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [7, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "明星",
+    "name_en": "Myojo",
+    "trend": 1,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [9, 7, 1]
+    ]
+  },
+  {
+    "name_cn": "残月",
+    "name_en": "Zangetsu",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [6, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "新月",
+    "name_en": "Shingetsu",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [8, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "丘月",
+    "name_en": "Kyugetsu",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [8, 8, 1]
+    ]
+  },
+  {
+    "name_cn": "山月",
+    "name_en": "Sangetsu",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [9, 8, 1]
+    ]
+  },
+  {
+    "name_cn": "游星",
+    "name_en": "Yusei",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [9, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "疏星",
+    "name_en": "Sosei",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 7, 2],
+      [5, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "斜月",
+    "name_en": "Shagetsu",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [8, 6, 1]
+    ]
+  },
+  {
+    "name_cn": "长星",
+    "name_en": "Chosei",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [5, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "流星",
+    "name_en": "Ryusei",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [9, 9, 1]
+    ]
+  },
+  {
+    "name_cn": "彗星",
+    "name_en": "Suisei",
+    "trend": 2,
+    "joseki": [
+      [7, 7, 1],
+      [6, 8, 2],
+      [9, 5, 1]
+    ]
+  }
+]

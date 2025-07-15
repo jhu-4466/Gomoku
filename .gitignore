@@ -1,3 +1,4 @@
 gomoku_env
 *.pdf
-*.json
+game_history
+evaluation
