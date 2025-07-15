@@ -2,3 +2,4 @@ gomoku_env
 *.pdf
 game_history
 evaluation
+test.py
