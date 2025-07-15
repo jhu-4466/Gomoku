@@ -35,13 +35,13 @@ from collections import defaultdict
 
 # Board attributes (15x15)
 PYGAME_CANVAS_WIDTH = 620
-PYGAME_CANVAS_HEIGHT = 670
+PYGAME_CANVAS_HEIGHT = 690
 GRID_SIZE = 15
 CELL_SIZE = 40
 BOARD_MARGIN = 30
 BOARD_WIDTH = CELL_SIZE * (GRID_SIZE - 1)
 BOARD_HEIGHT = BOARD_WIDTH
-INFO_BAR_HEIGHT = 50
+INFO_BAR_HEIGHT = 70
 
 # Colors
 # 1 - Black, 2 - White
@@ -104,11 +104,8 @@ class GomokuCanvas(QWidget):
         self.batch_info = None
 
         # --- Player and Color Mapping ---
-        self.player_names = {1: "Player 1", 2: "Player 2"}  # Static map of ID to name
-        self.player_colors = {
-            1: 1,
-            2: 2,
-        }  # Dynamic map of ID to color (1=Black, 2=White)
+        self.player_names = {1: "Player 1", 2: "Player 2"}
+        self.player_colors = {1: 1, 2: 2}
 
         # --- Rule settings ---
         self.banned_moves_enabled = False
@@ -158,7 +155,7 @@ class GomokuCanvas(QWidget):
         self.winner_id = None
         self.move_history = []
         self.player_names = player_names.copy()
-        self.player_colors = {1: 1, 2: 2}  # Reset to default
+        self.player_colors = {1: 1, 2: 2}
         self.is_in_game = True
 
         self.banned_moves_enabled = rules.get("banned_moves_enabled", False)
@@ -167,7 +164,7 @@ class GomokuCanvas(QWidget):
 
         if self.swap2_enabled:
             self.game_phase = GamePhase.SWAP2_P1_PLACE_3
-            self.swap2_stones_to_place = [1, 1, 2]  # 2 Black, 1 White
+            self.swap2_stones_to_place = [1, 1, 2]
         else:
             self.game_phase = GamePhase.NORMAL
 
@@ -198,10 +195,9 @@ class GomokuCanvas(QWidget):
             self.handle_swap2_placement(row, col)
 
     def agent_place_stone(self, row, col, thinking_time):
-        """Public method for the agent handler to place a stone."""
         if self.game_phase in [GamePhase.SWAP2_P1_PLACE_3, GamePhase.SWAP2_P2_PLACE_2]:
             self.handle_swap2_placement(row, col, thinking_time)
-        else:  # Assumes GamePhase.NORMAL
+        else:
             self.handle_normal_move(row, col, thinking_time=thinking_time)
 
     def handle_swap2_placement(self, row, col, thinking_time=None):
@@ -470,11 +466,12 @@ class GomokuBoard(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFixedSize(PYGAME_CANVAS_WIDTH, PYGAME_CANVAS_HEIGHT)
         self.is_paused = False
-        self.info_label = QLabel("Start a new game from the 'Game' menu.", self)
-        self.info_label.setFont(QFont("Arial", 12))
-        self.info_label.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
+
+        self.main_info_label = QLabel("Start a new game from the 'Game' menu.")
+        self.main_info_label.setFont(QFont("Arial", 13, QFont.Bold))
+        self.sub_info_label = QLabel()
+        self.sub_info_label.setFont(QFont("Arial", 10))
+
         self.pause_button = QPushButton("Pause", self)
         self.pause_button.setFixedWidth(80)
         self.pause_button.hide()
@@ -482,19 +479,29 @@ class GomokuBoard(QWidget):
         self.resume_button.setFixedWidth(80)
         self.resume_button.hide()
         self.canvas = GomokuCanvas(self)
+
         info_bar_container = QWidget()
         info_bar_container.setFixedHeight(INFO_BAR_HEIGHT)
+
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(0)
+        text_layout.addWidget(self.main_info_label)
+        text_layout.addWidget(self.sub_info_label)
+
         info_layout = QHBoxLayout(info_bar_container)
         info_layout.setContentsMargins(10, 0, 10, 0)
-        info_layout.addWidget(self.info_label)
+        info_layout.addLayout(text_layout)
         info_layout.addStretch()
         info_layout.addWidget(self.pause_button)
         info_layout.addWidget(self.resume_button)
+
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         main_layout.addWidget(info_bar_container)
         main_layout.addWidget(self.canvas)
+
         self.setLayout(main_layout)
         self.pause_button.clicked.connect(self.toggle_pause)
         self.resume_button.clicked.connect(self.toggle_pause)
@@ -507,12 +514,13 @@ class GomokuBoard(QWidget):
         batch_info = state.get("batch_info")
         batch_text = ""
         if batch_info:
-            batch_text = (
-                f"[Batch Game {batch_info['current']} of {batch_info['total']}] "
-            )
+            batch_text = f"[Batch {batch_info['current']}/{batch_info['total']}] "
+
+        main_text = ""
+        sub_text = ""
 
         if self.is_paused:
-            text = f"{batch_text}<i>Game Paused</i>"
+            main_text = f"{batch_text}Game Paused"
             self.pause_button.hide()
             self.resume_button.show()
         else:
@@ -523,10 +531,10 @@ class GomokuBoard(QWidget):
                     winner_name = state["player_names"].get(
                         state["winner_id"], "Unknown"
                     )
-                text = f"{batch_text}<b>Game Over! Winner is {winner_name}.</b>"
+                main_text = f"{batch_text}<b>Game Over! Winner is {winner_name}.</b>"
                 self.pause_button.hide()
             elif state["game_phase"] != GamePhase.NORMAL:
-                text = f"{batch_text}{self.get_swap2_info_text(state)}"
+                main_text = f"{batch_text}{self.get_swap2_info_text(state)}"
                 self.pause_button.hide()
             else:
                 p1_name = state["player_names"][1]
@@ -534,30 +542,32 @@ class GomokuBoard(QWidget):
                 p1_color_str = "Black" if state["player_colors"][1] == 1 else "White"
                 p2_color_str = "Black" if state["player_colors"][2] == 1 else "White"
                 current_player_id = state["current_player_id"]
+                current_player_name = state["player_names"][current_player_id]
                 current_player_color_str = (
                     "Black"
                     if state["player_colors"][current_player_id] == 1
                     else "White"
                 )
 
-                text = f"{batch_text}<b>{p1_name} ({p1_color_str})</b> vs <b>{p2_name} ({p2_color_str})</b> | Turn {state['move_count'] + 1}: <b>{current_player_color_str}</b> to move"
+                main_text = f"{batch_text}Turn {state['move_count'] + 1}: <b>{current_player_name}</b> ({current_player_color_str}) to move"
+                sub_text = (
+                    f"<b>{p1_name} ({p1_color_str}) vs {p2_name} ({p2_color_str})</b>"
+                )
                 self.pause_button.show()
-        self.info_label.setText(text)
+
+        self.main_info_label.setText(main_text)
+        self.sub_info_label.setText(sub_text)
 
     def get_swap2_info_text(self, state):
         phase = state["game_phase"]
-
+        player_name = state["player_names"][state["current_player_id"]]
         if phase == GamePhase.SWAP2_P1_PLACE_3:
-            player_name = state["player_names"][1]
             return f"<b>Swap2:</b> {player_name} places 3 stones."
         elif phase == GamePhase.SWAP2_P2_CHOOSE_ACTION:
-            player_name = state["player_names"][2]
             return f"<b>Swap2:</b> {player_name}, make your choice."
         elif phase == GamePhase.SWAP2_P2_PLACE_2:
-            player_name = state["player_names"][2]
             return f"<b>Swap2:</b> {player_name} places 2 more stones."
         elif phase == GamePhase.SWAP2_P1_CHOOSE_COLOR:
-            player_name = state["player_names"][1]
             return f"<b>Swap2:</b> {player_name}, choose your final color."
         return ""
 
@@ -603,7 +613,8 @@ class GomokuBoard(QWidget):
         self.canvas.reset_game(player_names, rules)
 
     def reconnectstatus_show(self, message: str):
-        self.info_label.setText(f"<i>{message}</i>")
+        self.main_info_label.setText(f"{message}")
+        self.sub_info_label.setText("")
         self.pause_button.hide()
 
 
@@ -616,15 +627,14 @@ class GomokuAgentHandler(QThread):
 
     def __init__(self, game_engine, player_configs):
         super().__init__()
-        self.game_engine = game_engine  # MODIFIED: Hold reference to the whole engine
+        self.game_engine = game_engine
         self.player_configs = player_configs
         self.running = True
 
     def run(self):
         while self.running:
-            # MODIFIED: Pause check is now the first thing in the loop
             if self.game_engine.is_paused or self.game_engine.canvas.game_over:
-                self.msleep(200)  # Sleep while paused or game is over
+                self.msleep(200)
                 continue
 
             state = self.game_engine.canvas.get_current_state()
@@ -648,16 +658,13 @@ class GomokuAgentHandler(QThread):
                 self.get_ai_swap2_choice(player_config, state, "P1_CHOOSE")
             else:
                 self.get_ai_move(player_config, state)
-
-            self.msleep(100)  # Shorter sleep, as the pause logic handles waiting
+            self.msleep(100)
 
     def get_ai_swap2_choice(self, player_config, state, choice_type):
         payload = self.build_payload(state)
         payload["game_phase"] = choice_type
-
         response_data, _ = self.make_request(player_config, payload)
         choice = response_data.get("choice")
-
         if choice and self.running:
             if choice_type == "P2_CHOOSE":
                 self.p2ChoiceSignal.emit(choice)
@@ -668,23 +675,18 @@ class GomokuAgentHandler(QThread):
         payload = self.build_payload(state)
         response_data, thinking_time = self.make_request(player_config, payload)
         move = response_data.get("move")
-
         if move and self.running:
             row, col = move[0], move[1]
             if self.game_engine.canvas.board[row][col] != 0:
-                print(
-                    f"Error: AI from {player_config['url']} returned an occupied cell {move}."
-                )
                 self.gameOverSignal.emit(f"Error: AI returned invalid move.")
                 return
             self.movedSignal.emit(row, col, thinking_time)
 
     def build_payload(self, state):
-        player_id = state["current_player_id"]
         return {
             "board": self.game_engine.canvas.board,
-            "player_id": player_id,
-            "color_to_play": state["player_colors"][player_id],
+            "player_id": state["current_player_id"],
+            "color_to_play": state["player_colors"][state["current_player_id"]],
             "banned_moves_enabled": self.game_engine.canvas.banned_moves_enabled,
             "game_phase": state["game_phase"],
             "move_history": self.game_engine.canvas.move_history,
@@ -701,18 +703,15 @@ class GomokuAgentHandler(QThread):
                 response = requests.post(
                     player_url, json=payload, timeout=player_timeout
                 )
-                end_time = time.time()
-                thinking_time = end_time - start_time
-
+                thinking_time = time.time() - start_time
                 response.raise_for_status()
                 return response.json(), thinking_time
             except requests.RequestException as e:
                 print(f"Request failed for {player_config['name']}: {e}")
                 if attempt < MAX_RETRIES - 1:
-                    reconnect_notice = (
+                    self.reconnectSignal.emit(
                         f"Connection lost. Retrying... ({attempt + 1}/{MAX_RETRIES})"
                     )
-                    self.reconnectSignal.emit(reconnect_notice)
                     self.msleep(RETRY_DELAY_S * 1000)
                 else:
                     self.gameOverSignal.emit(
@@ -730,15 +729,11 @@ class NewGameDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Start a New Game")
         main_layout = QVBoxLayout(self)
-
         player_selection_layout = QHBoxLayout()
-        self.left_player_group = QGroupBox("Left Player")
+
+        self.left_player_group = QGroupBox("Player 1")
         left_player_layout = QVBoxLayout(self.left_player_group)
-        self.right_player_group = QGroupBox("Right Player")
-        right_player_layout = QVBoxLayout(self.right_player_group)
-
         self.left_player_buttons, self.right_player_buttons = [], []
-
         human_left_radio = QRadioButton("Human")
         human_left_radio.setChecked(True)
         self.left_player_buttons.append({"name": "Human", "radio": human_left_radio})
@@ -748,22 +743,19 @@ class NewGameDialog(QDialog):
             self.left_player_buttons.append({"name": agent["name"], "radio": radio})
             left_player_layout.addWidget(radio)
 
-        human_right_radio = QRadioButton("Human")
-        self.right_player_buttons.append({"name": "Human", "radio": human_right_radio})
-        right_player_layout.addWidget(human_right_radio)
+        self.right_player_group = QGroupBox("Player 2")
+        right_player_layout = QVBoxLayout(self.right_player_group)
         for i, agent in enumerate(agent_players):
             radio = QRadioButton(agent["name"])
             if i == 0:
                 radio.setChecked(True)
             self.right_player_buttons.append({"name": agent["name"], "radio": radio})
             right_player_layout.addWidget(radio)
-
         left_player_layout.addStretch()
         right_player_layout.addStretch()
         player_selection_layout.addWidget(self.left_player_group)
         player_selection_layout.addWidget(self.right_player_group)
         main_layout.addLayout(player_selection_layout)
-
         first_player_group = QGroupBox("First Player (Black)")
         first_player_layout = QHBoxLayout(first_player_group)
         self.first_player_left = QRadioButton("Left Player")
@@ -774,7 +766,6 @@ class NewGameDialog(QDialog):
         first_player_layout.addWidget(self.first_player_right)
         first_player_layout.addWidget(self.first_player_random)
         main_layout.addWidget(first_player_group)
-
         rules_group = QGroupBox("Game Rules")
         rules_layout = QVBoxLayout(rules_group)
         self.banned_checkbox = QCheckBox("Enable Banned Moves (Renju Rules)")
@@ -782,7 +773,6 @@ class NewGameDialog(QDialog):
         rules_layout.addWidget(self.banned_checkbox)
         rules_layout.addWidget(self.swap2_checkbox)
         main_layout.addWidget(rules_group)
-
         self.batch_group = QGroupBox("Batch Play")
         batch_layout = QFormLayout(self.batch_group)
         self.num_games_spinbox = QSpinBox()
@@ -792,14 +782,12 @@ class NewGameDialog(QDialog):
         batch_layout.addRow("Number of Games:", self.num_games_spinbox)
         main_layout.addWidget(self.batch_group)
         self.batch_group.setEnabled(False)
-
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         main_layout.addWidget(self.button_box)
-
         self.swap2_checkbox.toggled.connect(self.on_swap2_toggled)
         for btn_data in self.left_player_buttons:
             btn_data["radio"].toggled.connect(self.update_batch_mode_availability)
@@ -829,13 +817,11 @@ class NewGameDialog(QDialog):
         right_player_name = next(
             b["name"] for b in self.right_player_buttons if b["radio"].isChecked()
         )
-
         first_player = "Left"
         if self.first_player_right.isChecked():
             first_player = "Right"
         elif self.first_player_random.isChecked():
             first_player = "Random"
-
         return {
             "left_player": left_player_name,
             "right_player": right_player_name,
@@ -885,11 +871,8 @@ class GomokuApp(QMainWindow):
 
     def start_game_loop(self):
         self.stop_game_loop()
-        is_p1_ai = self.player_configs[1] is not None
-        is_p2_ai = self.player_configs[2] is not None
-        if not is_p1_ai and not is_p2_ai:
+        if not self.player_configs[1] and not self.player_configs[2]:
             return
-
         self.agent_handler = GomokuAgentHandler(self.game_engine, self.player_configs)
         self.agent_handler.movedSignal.connect(
             self.game_engine.canvas.agent_place_stone
@@ -921,7 +904,6 @@ class GomokuApp(QMainWindow):
             num_games = self.game_settings.get("num_games", 1)
             left_is_human = self.game_settings["left_player"] == "Human"
             right_is_human = self.game_settings["right_player"] == "Human"
-
             if num_games > 1 and not left_is_human and not right_is_human:
                 self.is_batch_mode = True
                 self.batch_total_games = num_games
@@ -945,11 +927,9 @@ class GomokuApp(QMainWindow):
         name_to_config = {cfg["name"]: cfg for cfg in self.agent_players_config}
         left_config = name_to_config.get(self.game_settings["left_player"])
         right_config = name_to_config.get(self.game_settings["right_player"])
-
         first_player_choice = self.game_settings["first_player"]
         if first_player_choice == "Random":
             first_player_choice = random.choice(["Left", "Right"])
-
         if first_player_choice == "Left":
             p1_name, p2_name = (
                 self.game_settings["left_player"],
@@ -962,28 +942,22 @@ class GomokuApp(QMainWindow):
                 self.game_settings["left_player"],
             )
             p1_config, p2_config = right_config, left_config
-
-        final_player_names = {1: p1_name, 2: p2_name}
         self.player_configs = {1: p1_config, 2: p2_config}
-
         rules = self.game_settings["rules"].copy()
         if is_batch:
             rules["batch_info"] = {
                 "current": self.batch_current_game,
                 "total": self.batch_total_games,
             }
-
-        self.game_engine.reset_game(final_player_names, rules)
+        self.game_engine.reset_game({1: p1_name, 2: p2_name}, rules)
         self.start_game_loop()
 
     def gameover_handler(self, winner_id: int):
         self.stop_game_loop()
         self.save_game_history(winner_id)
-
         if self.is_batch_mode:
             winner_name = self.game_engine.canvas.player_names.get(winner_id, "Draw")
             self.batch_results[winner_name] += 1
-
             if self.batch_current_game < self.batch_total_games:
                 self.batch_current_game += 1
                 QTimer.singleShot(500, self.start_next_game_in_batch)
@@ -1031,27 +1005,24 @@ class GomokuApp(QMainWindow):
             self.game_engine.canvas.setEnabled(True)
         self.game_engine.pause_button.hide()
         self.game_engine.resume_button.hide()
-        self.game_engine.info_label.setText(f"<i>{message}</i>")
+        # FIX: Use the correct label attributes
+        self.game_engine.main_info_label.setText(f"<i>{message}</i>")
+        self.game_engine.sub_info_label.setText("")
 
     def save_game_history(self, winner_id):
         if not os.path.exists("game_history"):
             os.makedirs("game_history")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"./game_history/game_{timestamp}.json"
-
         player_names = self.game_engine.canvas.player_names
         winner_name = "None"
         if winner_id is not None:
             winner_name = player_names.get(winner_id, "Unknown")
-
         history_data = {
             "game_id": timestamp,
             "winner_id": winner_id,
             "winner_name": winner_name,
-            "player_setup": {
-                "p1_name": player_names[1],
-                "p2_name": player_names[2],
-            },
+            "player_setup": {"p1_name": player_names[1], "p2_name": player_names[2]},
             "final_colors": self.game_engine.canvas.player_colors,
             "rules": self.game_settings.get("rules", {}),
             "move_history": self.game_engine.canvas.move_history,
