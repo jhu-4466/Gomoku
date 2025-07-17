@@ -9,6 +9,8 @@ Core Improvements:
     considering strategically relevant moves.
 4.  Full NumPy Integration: Leverages NumPy for fast board operations and
     pattern matching.
+5.  Banned Move Detection: The agent can now identify and avoid illegal moves
+    for Black (Three-Three, Four-Four, Overline) when Renju rules are enabled.
 """
 import time
 import json
@@ -191,12 +193,98 @@ class NegamaxAgent:
                 return True
         return False
 
+    def _is_banned_move(self, r, c, player):
+        """
+        Checks if a move is a banned move for Black (three-three, four-four, or overline).
+        """
+        if self.board[r, c] != EMPTY:
+            return False, ""  # Not a valid move
+
+        # Temporarily place the stone to analyze the board state
+        self.board[r, c] = player
+        opponent = 3 - player
+
+        # 1. Check for Overline (more than 5 stones)
+        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+            count = 1
+            # Count forward
+            for i in range(1, 6):
+                nr, nc = r + i * dr, c + i * dc
+                if (
+                    0 <= nr < self.board_size
+                    and 0 <= nc < self.board_size
+                    and self.board[nr, nc] == player
+                ):
+                    count += 1
+                else:
+                    break
+            # Count backward
+            for i in range(1, 6):
+                nr, nc = r - i * dr, c - i * dc
+                if (
+                    0 <= nr < self.board_size
+                    and 0 <= nc < self.board_size
+                    and self.board[nr, nc] == player
+                ):
+                    count += 1
+                else:
+                    break
+            if count > 5:
+                self.board[r, c] = EMPTY  # Revert the move
+                return True, "Overline"
+
+        # 2. Check for Double-Three and Double-Four
+        three_count = 0
+        four_count = 0
+        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+            # Check for live threes
+            # Pattern: _OOO_ -> 01110
+            # Check O_OO, OO_O patterns created by the new stone
+            for i in range(-4, 1):
+                line = []
+                for j in range(5):
+                    nr, nc = r + (i + j) * dr, c + (i + j) * dc
+                    if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
+                        line.append(self.board[nr, nc])
+                    else:
+                        line.append(opponent)  # Treat board edge as opponent stone
+
+                line_tuple = tuple(line)
+                # Live three check: e.g., (0,1,1,1,0)
+                if line_tuple == (EMPTY, player, player, player, EMPTY):
+                    three_count += 1
+                    break  # A live three is found in this direction, no need to check further
+
+            # Check for fours (live or rush)
+            # Pattern: OOOO
+            for i in range(-4, 1):
+                line = []
+                for j in range(5):
+                    nr, nc = r + (i + j) * dr, c + (i + j) * dc
+                    if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
+                        line.append(self.board[nr, nc])
+                    else:
+                        line.append(opponent)
+
+                if line.count(player) == 4 and line.count(EMPTY) == 1:
+                    four_count += 1
+                    break  # A four is found
+
+        self.board[r, c] = EMPTY  # Revert the move before returning
+
+        if three_count >= 2:
+            return True, "Three-Three"
+        if four_count >= 2:
+            return True, "Four-Four"
+
+        return False, ""
+
     def get_possible_moves(self, player, banned_moves_enabled):
         if not np.any(self.board):
             return [(self.board_size // 2, self.board_size // 2)]
 
         moves = set()
-        radius = 3  # Search radius around existing stones
+        radius = 2  # Search radius around existing stones, sweet spot for efficiency
         rows, cols = np.where(self.board != EMPTY)
         for r, c in zip(rows, cols):
             for i in range(-radius, radius + 1):
@@ -207,6 +295,10 @@ class NegamaxAgent:
                         and 0 <= nc < self.board_size
                         and self.board[nr, nc] == EMPTY
                     ):
+                        if banned_moves_enabled and player == BLACK:
+                            is_banned, reason = self._is_banned_move(nr, nc, player)
+                            if is_banned:
+                                continue
                         moves.add((nr, nc))
 
         if not moves:
@@ -215,8 +307,6 @@ class NegamaxAgent:
 
         # Tiered Move Ordering: Prioritize moves that win or block immediate threats
         opponent = 3 - player
-        move_scores = {}
-
         my_win_moves = []
         opponent_win_moves = []
         for r_m, c_m in moves:
@@ -236,6 +326,7 @@ class NegamaxAgent:
             return my_win_moves
 
         # heuristic evaluation for non-my-winning moves
+        move_scores = {}
         for r_m, c_m in moves:
             if (r_m, c_m) in opponent_win_moves:
                 continue  # has to defense
@@ -274,18 +365,16 @@ class NegamaxAgent:
         best_move = None
         max_score = -float("inf")
 
+        # If the first move in the sorted list leads to a win, the search will prioritize it.
+        # If it blocks a threat, it will also be prioritized.
         moves = self.get_possible_moves(player, banned_moves_enabled)
         if not moves:
             return 0, None
-        # If the first move in the sorted list leads to a win, the search will prioritize it.
-        # If it blocks a threat, it will also be prioritized.
         for r, c in moves:
             self.board[r, c] = player
             # After making a move, check for win condition to assign max score
             if self._check_win_by_move(r, c, player):
-                score = SCORE_TABLE["FIVE"]["mine"] - (
-                    20 - depth
-                )  # Win faster is better
+                score = SCORE_TABLE["FIVE"]["mine"] - (20 - depth)
             else:
                 score, _ = self.negamax(
                     depth - 1, -beta, -alpha, 3 - player, banned_moves_enabled
@@ -297,11 +386,11 @@ class NegamaxAgent:
                 max_score = score
                 best_move = (r, c)
 
+            """Alpha-beta pruning"""
             alpha = max(alpha, max_score)
             if alpha >= beta:
-                break  # Alpha-beta pruning
+                break
 
-        # Store result in transposition table
         flag = "EXACT"
         if max_score <= alpha:
             flag = "UPPERBOUND"
@@ -323,13 +412,10 @@ class NegamaxAgent:
         self.transposition_table.clear()
         best_move_so_far = None
 
-        # Opening book logic
         num_stones = np.count_nonzero(self.board)
         if num_stones < 5:
-            # ... (opening book logic can be inserted here if needed) ...
             pass
 
-        # Iterative Deepening Search
         max_depth = 20
         for depth in range(1, max_depth + 1):
             print(f"--- Starting search at depth {depth} ---")
@@ -349,7 +435,6 @@ class NegamaxAgent:
                 f"Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
             )
 
-            # If a winning/losing sequence is found, no need to search deeper.
             if abs(score) >= SCORE_TABLE["FIVE"]["mine"] - 50:
                 print("Terminal sequence found. Halting search.")
                 break
@@ -401,11 +486,10 @@ def get_move():
         if best_move:
             return jsonify({"move": [int(best_move[0]), int(best_move[1])]})
         else:
-            return jsonify({"move": None})  # No move found
+            return jsonify({"move": None})
 
-    else:  # Fallback for Swap2 stone placement
+    else:
         moves = agent.get_possible_moves(1, False)
-        # FIX: Convert numpy.int64 to standard Python int
         if moves:
             best_move = moves[0]
             return jsonify({"move": [int(best_move[0]), int(best_move[1])]})
