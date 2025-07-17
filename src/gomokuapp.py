@@ -837,7 +837,7 @@ class NewGameDialog(QDialog):
 class GomokuApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Gomoku / Renju")
+        self.setWindowTitle("Gomoku")
         self.game_engine = GomokuBoard(self)
         self.setCentralWidget(self.game_engine)
         self.game_engine.gameOverSignal.connect(self.gameover_handler)
@@ -845,7 +845,11 @@ class GomokuApp(QMainWindow):
         self.agent_players_config = [
             {"name": "Random Strategy", "url": "http://127.0.0.1:5001/get_move"},
             {"name": "Baseline Strategy", "url": "http://127.0.0.1:5002/get_move"},
-            {"name": "Negamax AI", "url": "http://127.0.0.1:5003/get_move"},
+            {
+                "name": "Negamax AI",
+                "url": "http://127.0.0.1:5003/get_move",
+                "timeout": 10,
+            },
         ]
         self.agent_handler = None
         self.player_configs = {1: None, 2: None}
@@ -985,16 +989,32 @@ class GomokuApp(QMainWindow):
 
     def rules_description(self):
         rules_text = """
-            <h3>Freestyle Rules:</h3> The first player to get an unbroken row of five stones wins.<br>
-            <h3>Renju Rules (Banned Moves Enabled):</h3> To balance the game, the Black player (first player) cannot make moves that create:<br>
-            - <b>Three-Three, Four-Four, or Overline.</b><br>
-            <h3>Swap2 Opening Rule:</h3> A fair opening protocol:<br>
-            1. Player 1 places 2 black stones and 1 white stone.<br>
-            2. Player 2 can: (a) Take Black, (b) Take White, or (c) Place 2 more stones and pass the choice back.<br>
-            3. If (c), Player 1 chooses their final color.<br>
-            <br><i>Swap2 is always played with Renju rules.</i>
-            """
-        QMessageBox.information(self, "Gomoku Rules", rules_text)
+            <h3>Freestyle Gomoku:</h3>
+            <p>The first player to form an unbroken chain of five or more stones of their color wins.</p>
+            <h3>Banned Moves Rules:</h3>
+            <p>To balance the first-player advantage, the player with the black stones (the first player) is subject to several move restrictions, known as <b>banned moves</b>. Making a banned move results in a loss for Black. The White player has no restrictions. Banned moves include:</p>
+            <ul>
+                <li><b>Three-Three:</b> A move that simultaneously forms two or more open threes.</li>
+                <li><b>Four-Four:</b> A move that simultaneously forms two or more open or semi-open fours.</li>
+                <li><b>Overline:</b> A move that forms a continuous line of six or more stones of the same color.</li>
+            </ul>
+            <p><i>Note: If the White player forms an overline, it is a winning move, not a ban.</i></p>
+            <h3>Swap2 Opening Rule:</h3>
+            <p>This is a complex opening protocol designed to ensure fairness, which proceeds as follows:</p>
+            <ol>
+                <li><b>Step 1:</b> The first player (Player 1) places <b>two black stones and one white stone</b> anywhere on the board.</li>
+                <li><b>Step 2:</b> It is now the second player's (Player 2) turn to choose:
+                    <ul>
+                        <li>(a) To play with the black stones.</li>
+                        <li>(b) To play with the white stones.</li>
+                        <li>(c) To place <b>two more stones</b> (one black, one white) on the board and pass the choice of color back to Player 1.</li>
+                    </ul>
+                </li>
+                <li><b>Step 3:</b> If Player 2 chose option (c), it is now Player 1's turn to make the final decision on which color to play with (black or white) based on the five stones on the board.</li>
+            </ol>
+            <p><i><b>Important:</b> When the Swap2 rule is enabled, the banned moves rules (banned moves) are automatically enforced.</i></p>
+        """
+        QMessageBox.information(self, "Game Rules", rules_text)
 
     def agent_gameover_handler(self, message: str):
         self.stop_game_loop()

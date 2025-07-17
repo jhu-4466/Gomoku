@@ -1,13 +1,5 @@
 # -*- coding: utf-8 -*-
 """
-Gomoku AI Agent - High-Performance Version
-Author: Gemini
-Date: 2025-07-15
-
-This version incorporates significant optimizations based on the principles of
-game tree search, heuristic evaluation, and performance engineering to address
-key strategic flaws and achieve greater search depth.
-
 Core Improvements:
 1.  Asymmetric Heuristic Evaluation: The scoring system now heavily penalizes
     opponent's threats, forcing the AI to prioritize defense.
@@ -24,25 +16,38 @@ import random
 import numpy as np
 from flask import Flask, request, jsonify
 
-# --- Constants and Configuration ---
+# --- Configuration ---
 GRID_SIZE = 15
 EMPTY = 0
 BLACK = 1
 WHITE = 2
-TIME_LIMIT = 4.8  # Time limit for the AI to make a move, in seconds.
+TIME_LIMIT = 9.8  # Time limit for the AI to make a move, in seconds.
 
-# The score matrix is now encapsulated in a dictionary for elegance and maintainability.
+
+"""
+The values for opponent's threats ('opp') are now significantly higher than 'mine'
+to force the AI to block critical threats instead of making risky offensive moves.
+"""
 SCORE_TABLE = {
-    "FIVE": {"mine": 100000000, "opp": 100000000},
-    "LIVE_FOUR": {"mine": 10000000, "opp": 50000000},
-    "RUSH_FOUR": {"mine": 1000000, "opp": 5000000},
+    "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
+    "LIVE_FOUR": {
+        "mine": 10_000_000,
+        "opp": 20_000_000,
+    },  # _OOOO_
+    "RUSH_FOUR": {
+        "mine": 1_000_000,
+        "opp": 2_000_000,
+    },  # XOOOO_
     "DOUBLE_THREE": {
-        "mine": 500000,
-        "opp": 20000000,
-    },  # Placeholder, handled dynamically
-    "LIVE_THREE": {"mine": 100000, "opp": 500000},
-    "SLEEPY_THREE": {"mine": 5000, "opp": 10000},
-    "LIVE_TWO": {"mine": 1000, "opp": 2000},
+        "mine": 10_000_000,
+        "opp": 20_000_000,
+    },
+    "LIVE_THREE": {
+        "mine": 5_000_000,
+        "opp": 10_000_000,
+    },  # _OOO_
+    "SLEEPY_THREE": {"mine": 5_000, "opp": 10_000},  # XOOO_
+    "LIVE_TWO": {"mine": 1_000, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 200},
     "SINGLE": {"mine": 10, "opp": 10},
 }
@@ -63,7 +68,7 @@ except json.JSONDecodeError:
 # --- Zobrist Hashing for Transposition Table ---
 zobrist_table = np.random.randint(
     1, 2**63 - 1, (GRID_SIZE, GRID_SIZE, 3), dtype=np.uint64
-)
+)  # Three-dimensional array: 0 - EMPTY, 1 - BLACK, 2 - WHITE
 
 
 class NegamaxAgent:
@@ -73,27 +78,32 @@ class NegamaxAgent:
         self.start_time = 0
         self.board = np.zeros((board_size, board_size), dtype=int)
         # Pre-compute all possible lines for faster evaluation
-        self.lines = self._precompute_lines()
+        self.possible_win_lines = self._precompute_lines()
         self.line_hashes = {}  # Cache for evaluated line scores
 
     def _precompute_lines(self):
-        """Pre-computes all line indices for fast evaluation."""
+        """
+        Pre-computes all line indices for fast evaluation.
+        Omit the need to repeated loops and boundary judgments.
+        """
         lines = []
-        # Horizontal, Vertical, Diagonal (\\), Diagonal (//)
         for r in range(self.board_size):
             for c in range(self.board_size):
+                # -
                 if c <= self.board_size - 5:
                     lines.append([(r, c + i) for i in range(5)])
+                # Vertical
                 if r <= self.board_size - 5:
                     lines.append([(r + i, c) for i in range(5)])
+                # \\
                 if r <= self.board_size - 5 and c <= self.board_size - 5:
                     lines.append([(r + i, c + i) for i in range(5)])
+                # //
                 if r >= 4 and c <= self.board_size - 5:
                     lines.append([(r - i, c + i) for i in range(5)])
         return lines
 
     def _compute_hash(self):
-        """Computes the Zobrist hash for the current board state."""
         h = np.uint64(0)
         for r in range(self.board_size):
             for c in range(self.board_size):
@@ -111,6 +121,18 @@ class NegamaxAgent:
             return SCORE_TABLE["FIVE"]["mine"]
         if op_stones == 5:
             return -SCORE_TABLE["FIVE"]["opp"]
+
+        # check score patterns
+        if my_stones > 0 and op_stones > 0:
+            if my_stones == 3 and op_stones == 1 and empty_stones == 1:
+                return SCORE_TABLE["SLEEPY_THREE"]["mine"]
+            if op_stones == 3 and my_stones == 1 and empty_stones == 1:
+                return -SCORE_TABLE["SLEEPY_THREE"]["opp"]
+            if my_stones == 2 and op_stones == 1 and empty_stones == 2:
+                return SCORE_TABLE["SLEEPY_TWO"]["mine"]
+            if op_stones == 2 and my_stones == 1 and empty_stones == 2:
+                return -SCORE_TABLE["SLEEPY_TWO"]["opp"]
+            return 0  # Mixed stones with no clear pattern are neutral
 
         if my_stones == 4 and empty_stones == 1:
             return SCORE_TABLE["RUSH_FOUR"]["mine"]
@@ -132,28 +154,17 @@ class NegamaxAgent:
         if op_stones == 1 and empty_stones == 4:
             return -SCORE_TABLE["SINGLE"]["opp"]
 
-        if my_stones == 3 and op_stones == 1 and empty_stones == 1:
-            return SCORE_TABLE["SLEEPY_THREE"]["mine"]
-        if op_stones == 3 and my_stones == 1 and empty_stones == 1:
-            return -SCORE_TABLE["SLEEPY_THREE"]["opp"]
-
-        if my_stones == 2 and op_stones == 1 and empty_stones == 2:
-            return SCORE_TABLE["SLEEPY_TWO"]["mine"]
-        if op_stones == 2 and my_stones == 1 and empty_stones == 2:
-            return -SCORE_TABLE["SLEEPY_TWO"]["opp"]
-
         return 0
 
     def evaluate_board(self, player_to_move):
         """Heuristic evaluation function using pre-computed lines."""
         total_score = 0
-        for line_indices in self.lines:
+        for line_indices in self.possible_win_lines:
             line_tuple = tuple(self.board[r, c] for r, c in line_indices)
             total_score += self.evaluate_line(line_tuple, player_to_move)
         return total_score
 
     def _check_win_by_move(self, r, c, player):
-        """A faster win check focused on the last move."""
         for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             count = 1
             for i in range(1, 5):
@@ -181,12 +192,11 @@ class NegamaxAgent:
         return False
 
     def get_possible_moves(self, player, banned_moves_enabled):
-        """Generates and sorts moves using a high-performance tiered strategy."""
         if not np.any(self.board):
             return [(self.board_size // 2, self.board_size // 2)]
 
         moves = set()
-        radius = 2
+        radius = 3  # Search radius around existing stones
         rows, cols = np.where(self.board != EMPTY)
         for r, c in zip(rows, cols):
             for i in range(-radius, radius + 1):
@@ -199,28 +209,48 @@ class NegamaxAgent:
                     ):
                         moves.add((nr, nc))
 
-        # Tiered Move Ordering
+        if not moves:
+            empty_cells = np.argwhere(self.board == EMPTY)
+            return [tuple(cell) for cell in empty_cells]
+
+        # Tiered Move Ordering: Prioritize moves that win or block immediate threats
         opponent = 3 - player
         move_scores = {}
-        for r_m, c_m in moves:
-            # Tier 1: Win for me
-            if self._check_win_by_move(r_m, c_m, player):
-                move_scores[(r_m, c_m)] = SCORE_TABLE["FIVE"]["mine"] + 1
-                continue
-            # Tier 2: Block opponent's win
-            if self._check_win_by_move(r_m, c_m, opponent):
-                move_scores[(r_m, c_m)] = SCORE_TABLE["FIVE"]["opp"]
-                continue
 
-            # Tier 3 & 4: Heuristic evaluation of the move
+        my_win_moves = []
+        opponent_win_moves = []
+        for r_m, c_m in moves:
+            # my win
+            self.board[r_m, c_m] = player
+            if self._check_win_by_move(r_m, c_m, player):
+                my_win_moves.append((r_m, c_m))
+            self.board[r_m, c_m] = EMPTY
+
+            # opponent win
+            self.board[r_m, c_m] = opponent
+            if self._check_win_by_move(r_m, c_m, opponent):
+                opponent_win_moves.append((r_m, c_m))
+            self.board[r_m, c_m] = EMPTY
+
+        if my_win_moves:
+            return my_win_moves
+
+        # heuristic evaluation for non-my-winning moves
+        for r_m, c_m in moves:
+            if (r_m, c_m) in opponent_win_moves:
+                continue  # has to defense
             self.board[r_m, c_m] = player
             move_scores[(r_m, c_m)] = self.evaluate_board(player)
             self.board[r_m, c_m] = EMPTY
 
-        sorted_moves = sorted(
-            moves, key=lambda m: move_scores.get(m, -float("inf")), reverse=True
+        # Combine the tiers: block moves first, then other moves sorted by score.
+        sorted_other_moves = sorted(
+            move_scores.keys(),
+            key=lambda m: move_scores.get(m, -float("inf")),
+            reverse=True,
         )
-        return sorted_moves
+
+        return opponent_win_moves + sorted_other_moves
 
     def negamax(self, depth, alpha, beta, player, banned_moves_enabled):
         board_hash = self._compute_hash()
@@ -247,9 +277,11 @@ class NegamaxAgent:
         moves = self.get_possible_moves(player, banned_moves_enabled)
         if not moves:
             return 0, None
-
+        # If the first move in the sorted list leads to a win, the search will prioritize it.
+        # If it blocks a threat, it will also be prioritized.
         for r, c in moves:
             self.board[r, c] = player
+            # After making a move, check for win condition to assign max score
             if self._check_win_by_move(r, c, player):
                 score = SCORE_TABLE["FIVE"]["mine"] - (
                     20 - depth
@@ -258,7 +290,7 @@ class NegamaxAgent:
                 score, _ = self.negamax(
                     depth - 1, -beta, -alpha, 3 - player, banned_moves_enabled
                 )
-                score = -score
+                score = -score  # Negate: min(a, b) = -max(-a, -b)
             self.board[r, c] = EMPTY
 
             if score > max_score:
@@ -267,11 +299,15 @@ class NegamaxAgent:
 
             alpha = max(alpha, max_score)
             if alpha >= beta:
-                break
+                break  # Alpha-beta pruning
 
-        flag = "EXACT" if best_move else "UPPERBOUND"
-        if max_score >= beta:
+        # Store result in transposition table
+        flag = "EXACT"
+        if max_score <= alpha:
+            flag = "UPPERBOUND"
+        elif max_score >= beta:
             flag = "LOWERBOUND"
+
         self.transposition_table[board_hash] = {
             "score": max_score,
             "depth": depth,
@@ -293,6 +329,7 @@ class NegamaxAgent:
             # ... (opening book logic can be inserted here if needed) ...
             pass
 
+        # Iterative Deepening Search
         max_depth = 20
         for depth in range(1, max_depth + 1):
             print(f"--- Starting search at depth {depth} ---")
@@ -312,11 +349,15 @@ class NegamaxAgent:
                 f"Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
             )
 
+            # If a winning/losing sequence is found, no need to search deeper.
             if abs(score) >= SCORE_TABLE["FIVE"]["mine"] - 50:
                 print("Terminal sequence found. Halting search.")
                 break
 
         if not best_move_so_far:
+            print(
+                "No best move found from search, falling back to first possible move."
+            )
             possible_moves = self.get_possible_moves(player, banned_moves_enabled)
             if possible_moves:
                 return possible_moves[0]
@@ -357,7 +398,6 @@ def get_move():
 
     if color_to_play:
         best_move = agent.find_best_move(board, color_to_play, banned_moves_enabled)
-        # FIX: Convert numpy.int64 to standard Python int before returning JSON
         if best_move:
             return jsonify({"move": [int(best_move[0]), int(best_move[1])]})
         else:
