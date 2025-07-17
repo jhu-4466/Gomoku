@@ -23,7 +23,7 @@ GRID_SIZE = 15
 EMPTY = 0
 BLACK = 1
 WHITE = 2
-TIME_LIMIT = 9.8  # Time limit for the AI to make a move, in seconds.
+TIME_LIMIT = 9  # Time limit for the AI to make a move, in seconds.
 
 
 """
@@ -56,15 +56,15 @@ SCORE_TABLE = {
 
 
 app = Flask(__name__)
-opening_book = []
-try:
-    with open("josekis.json", "r", encoding="utf-8") as f:
-        opening_book = json.load(f)
-    print("Opening book 'josekis.json' loaded successfully.")
-except FileNotFoundError:
-    print("Warning: 'josekis.json' not found. Opening book will not be used.")
-except json.JSONDecodeError:
-    print("Error: 'josekis.json' is not a valid JSON file.")
+# opening_book = []
+# try:
+#     with open("josekis.json", "r", encoding="utf-8") as f:
+#         opening_book = json.load(f)
+#     print("Opening book 'josekis.json' loaded successfully.")
+# except FileNotFoundError:
+#     print("Warning: 'josekis.json' not found. Opening book will not be used.")
+# except json.JSONDecodeError:
+#     print("Error: 'josekis.json' is not a valid JSON file.")
 
 
 # --- Zobrist Hashing for Transposition Table ---

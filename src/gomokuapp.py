@@ -845,11 +845,7 @@ class GomokuApp(QMainWindow):
         self.agent_players_config = [
             {"name": "Random Strategy", "url": "http://127.0.0.1:5001/get_move"},
             {"name": "Baseline Strategy", "url": "http://127.0.0.1:5002/get_move"},
-            {
-                "name": "Negamax AI",
-                "url": "http://127.0.0.1:5003/get_move",
-                "timeout": 10,
-            },
+            {"name": "Negamax AI", "url": "http://127.0.0.1:5003/get_move"},
         ]
         self.agent_handler = None
         self.player_configs = {1: None, 2: None}
