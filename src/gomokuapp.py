@@ -50,6 +50,7 @@ COLOR_BLACK = (0, 0, 0)
 COLOR_WHITE = (255, 255, 255)
 COLOR_LINE = (50, 50, 50)
 COLOR_BANNED = (255, 0, 0, 150)
+COLOR_HIGHLIGHT = (255, 50, 50)  # NEW: Color for the highlight lines
 
 # Star points (15x15)
 STAR_POINTS = [
@@ -102,6 +103,7 @@ class GomokuCanvas(QWidget):
         self.move_history = []
         self.is_in_game = False
         self.batch_info = None
+        self.last_move_coords = None  # NEW: To store the last move's (row, col)
 
         # --- Player and Color Mapping ---
         self.player_names = {1: "Player 1", 2: "Player 2"}
@@ -132,12 +134,34 @@ class GomokuCanvas(QWidget):
     def draw_frame(self):
         self.screen.fill(COLOR_BOARD)
         self.draw_board_grid()
+        self.draw_highlight()  # NEW: Call the highlight drawing function
         self.draw_pieces()
         if self.banned_point_on_hover:
             self._draw_banned_overlay(self.banned_point_on_hover)
         elif self.banned_point_on_click:
             self._draw_banned_overlay(self.banned_point_on_click)
             self.banned_point_on_click = None
+
+    def draw_highlight(self):
+        """Draws highlight lines for the last move."""
+        if not self.last_move_coords:
+            return
+
+        row, col = self.last_move_coords
+        pygame.draw.line(
+            self.screen,
+            COLOR_HIGHLIGHT,
+            (BOARD_MARGIN + col * CELL_SIZE, BOARD_MARGIN),
+            (BOARD_MARGIN + col * CELL_SIZE, BOARD_HEIGHT + BOARD_MARGIN),
+            2,
+        )
+        pygame.draw.line(
+            self.screen,
+            COLOR_HIGHLIGHT,
+            (BOARD_MARGIN, BOARD_MARGIN + row * CELL_SIZE),
+            (BOARD_WIDTH + BOARD_MARGIN, BOARD_MARGIN + row * CELL_SIZE),
+            2,
+        )
 
     def _draw_banned_overlay(self, point):
         center = (
@@ -157,6 +181,7 @@ class GomokuCanvas(QWidget):
         self.player_names = player_names.copy()
         self.player_colors = {1: 1, 2: 2}
         self.is_in_game = True
+        self.last_move_coords = None
 
         self.banned_moves_enabled = rules.get("banned_moves_enabled", False)
         self.swap2_enabled = rules.get("swap2_enabled", False)
@@ -207,6 +232,7 @@ class GomokuCanvas(QWidget):
 
         stone_color = self.swap2_stones_to_place.pop(0)
         self.board[row][col] = stone_color
+        self.last_move_coords = (row, col)
 
         turn_player_id = 1 if self.game_phase == GamePhase.SWAP2_P1_PLACE_3 else 2
 
@@ -279,6 +305,7 @@ class GomokuCanvas(QWidget):
                 return
 
         self.board[row][col] = color_to_play
+        self.last_move_coords = (row, col)
 
         move_data = {
             "turn": len(self.move_history) + 1,
@@ -845,7 +872,11 @@ class GomokuApp(QMainWindow):
         self.agent_players_config = [
             {"name": "Random Strategy", "url": "http://127.0.0.1:5001/get_move"},
             {"name": "Baseline Strategy", "url": "http://127.0.0.1:5002/get_move"},
-            {"name": "Negamax AI", "url": "http://127.0.0.1:5003/get_move"},
+            {
+                "name": "Negamax AI",
+                "url": "http://127.0.0.1:5003/get_move",
+                "timeout": 30,
+            },
         ]
         self.agent_handler = None
         self.player_configs = {1: None, 2: None}
@@ -927,6 +958,7 @@ class GomokuApp(QMainWindow):
         name_to_config = {cfg["name"]: cfg for cfg in self.agent_players_config}
         left_config = name_to_config.get(self.game_settings["left_player"])
         right_config = name_to_config.get(self.game_settings["right_player"])
+
         first_player_choice = self.game_settings["first_player"]
         if first_player_choice == "Random":
             first_player_choice = random.choice(["Left", "Right"])
