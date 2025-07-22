@@ -50,7 +50,7 @@ COLOR_BLACK = (0, 0, 0)
 COLOR_WHITE = (255, 255, 255)
 COLOR_LINE = (50, 50, 50)
 COLOR_BANNED = (255, 0, 0, 150)
-COLOR_HIGHLIGHT = (255, 50, 50)  # NEW: Color for the highlight lines
+COLOR_HIGHLIGHT = (255, 50, 50)
 
 # Star points (15x15)
 STAR_POINTS = [
@@ -103,7 +103,7 @@ class GomokuCanvas(QWidget):
         self.move_history = []
         self.is_in_game = False
         self.batch_info = None
-        self.last_move_coords = None  # NEW: To store the last move's (row, col)
+        self.last_move_coords = None
 
         # --- Player and Color Mapping ---
         self.player_names = {1: "Player 1", 2: "Player 2"}
@@ -134,7 +134,7 @@ class GomokuCanvas(QWidget):
     def draw_frame(self):
         self.screen.fill(COLOR_BOARD)
         self.draw_board_grid()
-        self.draw_highlight()  # NEW: Call the highlight drawing function
+        self.draw_highlight()
         self.draw_pieces()
         if self.banned_point_on_hover:
             self._draw_banned_overlay(self.banned_point_on_hover)
@@ -148,6 +148,7 @@ class GomokuCanvas(QWidget):
             return
 
         row, col = self.last_move_coords
+
         pygame.draw.line(
             self.screen,
             COLOR_HIGHLIGHT,
@@ -331,8 +332,23 @@ class GomokuCanvas(QWidget):
             self.is_in_game = False
             self.winner_id = 3 - self.current_player_id
             self.gameOverSignal.emit(self.winner_id)
+        elif len(self.move_history) == GRID_SIZE * GRID_SIZE:
+            self.game_over = True
+            self.is_in_game = False
+            self.winner_id = 0
+            self.gameOverSignal.emit(self.winner_id)
         else:
             self.current_player_id = 3 - self.current_player_id
+            next_player_color = self.player_colors[self.current_player_id]
+            if self.banned_moves_enabled and next_player_color == 1:
+                if self.check_for_black_no_valid_moves():
+                    self.game_over = True
+                    self.is_in_game = False
+                    self.winner_id = 3 - self.current_player_id  # White wins
+                    self.gameOverSignal.emit(self.winner_id)
+                    self.state_change()
+                    self.update()
+                    return
 
         self.state_change()
         self.update()
@@ -446,6 +462,33 @@ class GomokuCanvas(QWidget):
                 return True
         return False
 
+    def get_empty_points(self):
+        """Returns a list of (r, c) tuples for all empty points on the board."""
+        empty_points = []
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                if self.board[r][c] == 0:
+                    empty_points.append((r, c))
+        return empty_points
+
+    def check_for_black_no_valid_moves(self):
+        """
+        Checks if Black has any valid moves left.
+        This is true if all empty points on the board are banned moves.
+        """
+        empty_points = self.get_empty_points()
+        if not empty_points:
+            return False  # Board is full, handled as a draw
+
+        for r, c in empty_points:
+            is_banned, _ = self.check_banned_move(r, c)
+            if not is_banned:
+                # Found a valid (non-banned) move, so Black is not stuck
+                return False
+
+        # If we went through all empty points and all are banned, Black loses.
+        return True
+
     def state_change(self):
         self.stateChangedSignal.emit(self.get_current_state())
 
@@ -553,12 +596,17 @@ class GomokuBoard(QWidget):
         else:
             self.resume_button.hide()
             if state["game_over"]:
-                winner_name = "No one"
-                if state["winner_id"] is not None:
-                    winner_name = state["player_names"].get(
-                        state["winner_id"], "Unknown"
+                winner_id = state["winner_id"]
+                # MODIFIED: Handle draw case
+                if winner_id == 0:
+                    main_text = f"{batch_text}<b>Game Over! It's a Draw.</b>"
+                else:
+                    winner_name = "No one"
+                    if winner_id is not None:
+                        winner_name = state["player_names"].get(winner_id, "Unknown")
+                    main_text = (
+                        f"{batch_text}<b>Game Over! Winner is {winner_name}.</b>"
                     )
-                main_text = f"{batch_text}<b>Game Over! Winner is {winner_name}.</b>"
                 self.pause_button.hide()
             elif state["game_phase"] != GamePhase.NORMAL:
                 main_text = f"{batch_text}{self.get_swap2_info_text(state)}"
@@ -988,7 +1036,12 @@ class GomokuApp(QMainWindow):
         self.stop_game_loop()
         self.save_game_history(winner_id)
         if self.is_batch_mode:
-            winner_name = self.game_engine.canvas.player_names.get(winner_id, "Draw")
+            if winner_id == 0:
+                winner_name = "Draw"
+            else:
+                winner_name = self.game_engine.canvas.player_names.get(
+                    winner_id, "Unknown"
+                )
             self.batch_results[winner_name] += 1
             if self.batch_current_game < self.batch_total_games:
                 self.batch_current_game += 1
@@ -1002,8 +1055,14 @@ class GomokuApp(QMainWindow):
         else:
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("Game Over")
-            winner_name = self.game_engine.canvas.player_names.get(winner_id, "No one")
-            msg_box.setText(f"<h2>{winner_name} Wins!</h2>")
+            if winner_id == 0:
+                msg_box.setText(f"<h2>It's a Draw!</h2>")
+            else:
+                winner_name = self.game_engine.canvas.player_names.get(
+                    winner_id, "No one"
+                )
+                msg_box.setText(f"<h2>{winner_name} Wins!</h2>")
+
             msg_box.setInformativeText("What would you like to do next?")
             msg_box.setIcon(QMessageBox.Icon.Question)
             play_again_btn = msg_box.addButton(
@@ -1053,7 +1112,6 @@ class GomokuApp(QMainWindow):
             self.game_engine.canvas.setEnabled(True)
         self.game_engine.pause_button.hide()
         self.game_engine.resume_button.hide()
-        # FIX: Use the correct label attributes
         self.game_engine.main_info_label.setText(f"<i>{message}</i>")
         self.game_engine.sub_info_label.setText("")
 
@@ -1063,9 +1121,14 @@ class GomokuApp(QMainWindow):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"./game_history/game_{timestamp}.json"
         player_names = self.game_engine.canvas.player_names
-        winner_name = "None"
-        if winner_id is not None:
+
+        if winner_id == 0:
+            winner_name = "Draw"
+        elif winner_id is not None:
             winner_name = player_names.get(winner_id, "Unknown")
+        else:
+            winner_name = "None"
+
         history_data = {
             "game_id": timestamp,
             "winner_id": winner_id,
