@@ -769,7 +769,7 @@ class GomokuAgentHandler(QThread):
 
     def make_request(self, player_config, payload):
         player_url = player_config["url"]
-        player_timeout = player_config.get("timeout", 10)
+        player_timeout = player_config.get("timeout", 5)
         for attempt in range(MAX_RETRIES):
             if not self.running:
                 return {}, 0.0
