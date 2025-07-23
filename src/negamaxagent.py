@@ -579,7 +579,8 @@ class NegamaxAgent:
                     depth, -float("inf"), float("inf"), player, banned_moves_enabled
                 )
 
-                best_move_so_far = move
+                if move is None:
+                    best_move_so_far = move
                 elapsed_time = time.time() - self.start_time
                 logger.info(
                     f"Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
@@ -588,7 +589,6 @@ class NegamaxAgent:
                 if abs(score) >= SCORE_TABLE["FIVE"]["mine"] - MAX_DEPTH:
                     logger.info("Terminal sequence found. Halting search.")
                     break
-
             except TimeoutException:
                 logger.warning(
                     f"Timeout! Search at depth {depth} was forcefully interrupted."
