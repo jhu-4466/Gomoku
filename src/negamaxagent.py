@@ -1,76 +1,59 @@
 # -*- coding: utf-8 -*-
-"""
-Core Improvements:
-1.  Asymmetric Heuristic Evaluation: The scoring system now heavily penalizes
-    opponent's threats, forcing the AI to prioritize defense.
-2.  Tiered Move Ordering: A high-speed, multi-level move sorting strategy
-    dramatically improves Alpha-Beta pruning efficiency.
-3.  Optimized Candidate Move Generation: Reduces the branching factor by only
-    considering strategically relevant moves.
-4.  Full NumPy Integration: Leverages NumPy for fast board operations and
-    pattern matching.
-5.  Banned Move Detection: The agent can now identify and avoid illegal moves
-    for Black (Three-Three, Four-Four, Overline) when Renju rules are enabled.
-"""
+
 import time
 import json
-import random
+import re
+from collections import defaultdict
 import numpy as np
 from flask import Flask, request, jsonify
+
 
 # --- Configuration ---
 GRID_SIZE = 15
 EMPTY = 0
 BLACK = 1
 WHITE = 2
-TIME_LIMIT = 9  # Time limit for the AI to make a move, in seconds.
-
+# EXPERT COMMENT: Adjusted TIME_LIMIT to be slightly less than typical HTTP timeouts.
+TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
+MAX_DEPTH = 50  # Max search depth for IDDFS
+MIN_DEPTH = 3  # The minimum depth the AI must complete, regardless of time.
 
 """
 The values for opponent's threats ('opp') are now significantly higher than 'mine'
 to force the AI to block critical threats instead of making risky offensive moves.
 """
 SCORE_TABLE = {
-    "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
-    "LIVE_FOUR": {
-        "mine": 10_000_000,
-        "opp": 20_000_000,
-    },  # _OOOO_
-    "RUSH_FOUR": {
-        "mine": 1_000_000,
-        "opp": 2_000_000,
-    },  # XOOOO_
-    "DOUBLE_THREE": {
-        "mine": 10_000_000,
-        "opp": 20_000_000,
-    },
-    "LIVE_THREE": {
-        "mine": 5_000_000,
-        "opp": 10_000_000,
-    },  # _OOO_
-    "SLEEPY_THREE": {"mine": 5_000, "opp": 10_000},  # XOOO_
+    "FIVE": {"mine": 100_000_000, "opp": 100_000_000},
+    "LIVE_FOUR": {"mine": 10_000_000, "opp": 50_000_000},
+    "RUSH_FOUR": {"mine": 1_000_000, "opp": 2_000_000},
+    "DOUBLE_THREE": {"mine": 1_000_000, "opp": 10_000_000},
+    "LIVE_THREE": {"mine": 500_000, "opp": 1_500_000},
+    "SLEEPY_THREE": {"mine": 5_000, "opp": 10_000},
     "LIVE_TWO": {"mine": 1_000, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 200},
-    "SINGLE": {"mine": 10, "opp": 10},
+    "SINGLE": {"mine": 10, "opp": 20},
 }
 
-
-app = Flask(__name__)
-# opening_book = []
-# try:
-#     with open("josekis.json", "r", encoding="utf-8") as f:
-#         opening_book = json.load(f)
-#     print("Opening book 'josekis.json' loaded successfully.")
-# except FileNotFoundError:
-#     print("Warning: 'josekis.json' not found. Opening book will not be used.")
-# except json.JSONDecodeError:
-#     print("Error: 'josekis.json' is not a valid JSON file.")
-
-
-# --- Zobrist Hashing for Transposition Table ---
+PATTERNS_PLAYER = {
+    "FIVE": re.compile(r"11111"),
+    "LIVE_FOUR": re.compile(r"011110"),
+    "RUSH_FOUR": re.compile(r"211110|011112|10111|11011|11101"),
+    "LIVE_THREE": re.compile(r"01110|010110"),
+    "SLEEPY_THREE": re.compile(r"21110|01112|210110|011012|21101|10112"),
+    "LIVE_TWO": re.compile(r"001100|01010|010010"),
+    "SLEEPY_TWO": re.compile(r"21100|00112|21010|01012|21001|10012"),
+}
 zobrist_table = np.random.randint(
     1, 2**63 - 1, (GRID_SIZE, GRID_SIZE, 3), dtype=np.uint64
-)  # Three-dimensional array: 0 - EMPTY, 1 - BLACK, 2 - WHITE
+)
+zobrist_player_turn = np.random.randint(1, 2**63 - 1, dtype=np.uint64)
+
+app = Flask(__name__)
+
+
+# Custom exception for reliable timeout handling.
+class TimeoutException(Exception):
+    pass
 
 
 class NegamaxAgent:
@@ -79,212 +62,202 @@ class NegamaxAgent:
         self.transposition_table = {}
         self.start_time = 0
         self.board = np.zeros((board_size, board_size), dtype=int)
-        # Pre-compute all possible lines for faster evaluation
-        self.possible_win_lines = self._precompute_lines()
-        self.line_hashes = {}  # Cache for evaluated line scores
 
-    def _precompute_lines(self):
-        """
-        Pre-computes all line indices for fast evaluation.
-        Omit the need to repeated loops and boundary judgments.
-        """
-        lines = []
-        for r in range(self.board_size):
-            for c in range(self.board_size):
-                # -
-                if c <= self.board_size - 5:
-                    lines.append([(r, c + i) for i in range(5)])
-                # Vertical
-                if r <= self.board_size - 5:
-                    lines.append([(r + i, c) for i in range(5)])
-                # \\
-                if r <= self.board_size - 5 and c <= self.board_size - 5:
-                    lines.append([(r + i, c + i) for i in range(5)])
-                # //
-                if r >= 4 and c <= self.board_size - 5:
-                    lines.append([(r - i, c + i) for i in range(5)])
-        return lines
+        self.killer_moves = [[None, None] for _ in range(MAX_DEPTH + 1)]
+        self.history_heuristic = defaultdict(int)
+        self.search_generation = 0
+        self.last_depth_start_time = 0
 
-    def _compute_hash(self):
+        self.current_search_depth = 0
+        self.nodes_evaluated_at_root = 0
+        self.total_nodes_at_root = 0
+
+    def _compute_hash(self, player):
         h = np.uint64(0)
         for r in range(self.board_size):
             for c in range(self.board_size):
                 if self.board[r, c] != EMPTY:
                     h ^= zobrist_table[r, c, self.board[r, c]]
+        if player == WHITE:
+            h ^= zobrist_player_turn
         return h
-
-    def evaluate_line(self, line_tuple, player):
-        """Evaluates a single tuple representing a line of 5 stones."""
-        my_stones = line_tuple.count(player)
-        op_stones = line_tuple.count(3 - player)
-        empty_stones = line_tuple.count(EMPTY)
-
-        if my_stones == 5:
-            return SCORE_TABLE["FIVE"]["mine"]
-        if op_stones == 5:
-            return -SCORE_TABLE["FIVE"]["opp"]
-
-        # check score patterns
-        if my_stones > 0 and op_stones > 0:
-            if my_stones == 3 and op_stones == 1 and empty_stones == 1:
-                return SCORE_TABLE["SLEEPY_THREE"]["mine"]
-            if op_stones == 3 and my_stones == 1 and empty_stones == 1:
-                return -SCORE_TABLE["SLEEPY_THREE"]["opp"]
-            if my_stones == 2 and op_stones == 1 and empty_stones == 2:
-                return SCORE_TABLE["SLEEPY_TWO"]["mine"]
-            if op_stones == 2 and my_stones == 1 and empty_stones == 2:
-                return -SCORE_TABLE["SLEEPY_TWO"]["opp"]
-            return 0  # Mixed stones with no clear pattern are neutral
-
-        if my_stones == 4 and empty_stones == 1:
-            return SCORE_TABLE["RUSH_FOUR"]["mine"]
-        if op_stones == 4 and empty_stones == 1:
-            return -SCORE_TABLE["RUSH_FOUR"]["opp"]
-
-        if my_stones == 3 and empty_stones == 2:
-            return SCORE_TABLE["LIVE_THREE"]["mine"]
-        if op_stones == 3 and empty_stones == 2:
-            return -SCORE_TABLE["LIVE_THREE"]["opp"]
-
-        if my_stones == 2 and empty_stones == 3:
-            return SCORE_TABLE["LIVE_TWO"]["mine"]
-        if op_stones == 2 and empty_stones == 3:
-            return -SCORE_TABLE["LIVE_TWO"]["opp"]
-
-        if my_stones == 1 and empty_stones == 4:
-            return SCORE_TABLE["SINGLE"]["mine"]
-        if op_stones == 1 and empty_stones == 4:
-            return -SCORE_TABLE["SINGLE"]["opp"]
-
-        return 0
-
-    def evaluate_board(self, player_to_move):
-        """Heuristic evaluation function using pre-computed lines."""
-        total_score = 0
-        for line_indices in self.possible_win_lines:
-            line_tuple = tuple(self.board[r, c] for r, c in line_indices)
-            total_score += self.evaluate_line(line_tuple, player_to_move)
-        return total_score
 
     def _check_win_by_move(self, r, c, player):
         for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             count = 1
             for i in range(1, 5):
                 nr, nc = r + i * dr, c + i * dc
-                if (
+                if not (
                     0 <= nr < self.board_size
                     and 0 <= nc < self.board_size
                     and self.board[nr, nc] == player
                 ):
-                    count += 1
-                else:
                     break
+                count += 1
             for i in range(1, 5):
                 nr, nc = r - i * dr, c - i * dc
-                if (
+                if not (
                     0 <= nr < self.board_size
                     and 0 <= nc < self.board_size
                     and self.board[nr, nc] == player
                 ):
-                    count += 1
-                else:
                     break
+                count += 1
             if count >= 5:
                 return True
         return False
 
     def _is_banned_move(self, r, c, player):
-        """
-        Checks if a move is a banned move for Black (three-three, four-four, or overline).
-        """
         if self.board[r, c] != EMPTY:
-            return False, ""  # Not a valid move
+            return False, ""
 
-        # Temporarily place the stone to analyze the board state
         self.board[r, c] = player
-        opponent = 3 - player
 
-        # 1. Check for Overline (more than 5 stones)
+        fours, threes, overline = 0, 0, False
         for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             count = 1
-            # Count forward
             for i in range(1, 6):
                 nr, nc = r + i * dr, c + i * dc
-                if (
+                if not (
                     0 <= nr < self.board_size
                     and 0 <= nc < self.board_size
                     and self.board[nr, nc] == player
                 ):
-                    count += 1
-                else:
                     break
-            # Count backward
+                count += 1
             for i in range(1, 6):
                 nr, nc = r - i * dr, c - i * dc
-                if (
+                if not (
                     0 <= nr < self.board_size
                     and 0 <= nc < self.board_size
                     and self.board[nr, nc] == player
                 ):
-                    count += 1
-                else:
                     break
+                count += 1
             if count > 5:
-                self.board[r, c] = EMPTY  # Revert the move
-                return True, "Overline"
+                overline = True
+                break
 
-        # 2. Check for Double-Three and Double-Four
-        three_count = 0
-        four_count = 0
-        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
-            # Check for live threes
-            # Pattern: _OOO_ -> 01110
-            # Check O_OO, OO_O patterns created by the new stone
-            for i in range(-4, 1):
-                line = []
-                for j in range(5):
-                    nr, nc = r + (i + j) * dr, c + (i + j) * dc
-                    if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
-                        line.append(self.board[nr, nc])
-                    else:
-                        line.append(opponent)  # Treat board edge as opponent stone
+            threes_in_line, fours_in_line = self._count_patterns_at(
+                r, c, dr, dc, player
+            )
+            threes += threes_in_line
+            fours += fours_in_line
 
-                line_tuple = tuple(line)
-                # Live three check: e.g., (0,1,1,1,0)
-                if line_tuple == (EMPTY, player, player, player, EMPTY):
-                    three_count += 1
-                    break  # A live three is found in this direction, no need to check further
-
-            # Check for fours (live or rush)
-            # Pattern: OOOO
-            for i in range(-4, 1):
-                line = []
-                for j in range(5):
-                    nr, nc = r + (i + j) * dr, c + (i + j) * dc
-                    if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
-                        line.append(self.board[nr, nc])
-                    else:
-                        line.append(opponent)
-
-                if line.count(player) == 4 and line.count(EMPTY) == 1:
-                    four_count += 1
-                    break  # A four is found
-
-        self.board[r, c] = EMPTY  # Revert the move before returning
-
-        if three_count >= 2:
+        self.board[r, c] = EMPTY
+        if overline:
+            return True, "Overline"
+        if threes >= 2:
             return True, "Three-Three"
-        if four_count >= 2:
+        if fours >= 2:
             return True, "Four-Four"
 
         return False, ""
 
-    def get_possible_moves(self, player, banned_moves_enabled):
+    def _count_patterns_at(self, r, c, dr, dc, player):
+        threes, fours = 0, 0
+        for i in range(-2, 1):
+            p = [(r + (i + j) * dr, c + (i + j) * dc) for j in range(5)]
+            if all(
+                0 <= pr < self.board_size and 0 <= pc < self.board_size
+                for pr, pc in [p[0], p[4]]
+            ):
+                line = tuple(self.board[pr, pc] for pr, pc in p)
+                if line == (EMPTY, player, player, player, EMPTY):
+                    threes += 1
+                    break
+        for i in range(-3, 1):
+            p = [(r + (i + j) * dr, c + (i + j) * dc) for j in range(4)]
+            if all(
+                0 <= pr < self.board_size and 0 <= pc < self.board_size for pr, pc in p
+            ):
+                line = [self.board[pr, pc] for pr, pc in p]
+                if line.count(player) == 4:
+                    fours += 1
+                    break
+        return threes, fours
+
+    def evaluate_board(self, player_to_move):
+        my_patterns = self._find_patterns_fast(player_to_move)
+        op_patterns = self._find_patterns_fast(3 - player_to_move)
+
+        my_score = sum(SCORE_TABLE[p]["mine"] * c for p, c in my_patterns.items())
+        op_score = sum(SCORE_TABLE[p]["opp"] * c for p, c in op_patterns.items())
+
+        if my_patterns.get("LIVE_THREE", 0) >= 2:
+            my_score += SCORE_TABLE["DOUBLE_THREE"]["mine"]
+        if op_patterns.get("LIVE_THREE", 0) >= 2:
+            op_score += SCORE_TABLE["DOUBLE_THREE"]["opp"]
+
+        return my_score - op_score
+
+    def _find_patterns_fast(self, player):
+        patterns = defaultdict(int)
+        player_board = np.copy(self.board)
+        if player == WHITE:
+            player_board[self.board == WHITE] = 1
+            player_board[self.board == BLACK] = 2
+        else:
+            player_board[self.board == BLACK] = 1
+            player_board[self.board == WHITE] = 2
+
+        board_str_lines = []
+        for i in range(self.board_size):
+            board_str_lines.append("".join(map(str, player_board[i, :])))
+            board_str_lines.append("".join(map(str, player_board[:, i])))
+        for i in range(-self.board_size + 1, self.board_size):
+            board_str_lines.append("".join(map(str, player_board.diagonal(i))))
+            board_str_lines.append(
+                "".join(map(str, np.fliplr(player_board).diagonal(i)))
+            )
+
+        for line in board_str_lines:
+            for pattern_name, regex in PATTERNS_PLAYER.items():
+                patterns[pattern_name] += len(regex.findall(line))
+
+        if patterns["FIVE"] > 0:
+            patterns["RUSH_FOUR"] -= patterns["FIVE"] * 4
+
+        return patterns
+
+    def _rate_move_statically(self, r, c, player):
+        """
+        NEW: A lightweight function to statically evaluate the threat
+        of a single move for sorting purposes. It is much faster than
+        a full board evaluation.
+        """
+        score = 0
+        opponent = 3 - player
+
+        # Offensive score
+        self.board[r, c] = player
+        my_patterns = self._find_patterns_fast(player)
+        score += my_patterns.get("LIVE_FOUR", 0) * 100000
+        score += my_patterns.get("RUSH_FOUR", 0) * 10000
+        score += my_patterns.get("LIVE_THREE", 0) * 5000
+        self.board[r, c] = EMPTY
+
+        # Defensive score
+        self.board[r, c] = opponent
+        op_patterns = self._find_patterns_fast(opponent)
+        score += op_patterns.get("LIVE_FOUR", 0) * 75000
+        score += op_patterns.get("RUSH_FOUR", 0) * 7500
+        score += op_patterns.get("LIVE_THREE", 0) * 2500
+        self.board[r, c] = EMPTY
+
+        return score
+
+    def get_possible_moves(self, player, banned_moves_enabled, depth, hash_move):
+        """
+        Uses a sophisticated, multi-layered sorting approach,
+        including static threat analysis, to achieve
+        Threat Space Search.
+        """
         if not np.any(self.board):
             return [(self.board_size // 2, self.board_size // 2)]
 
         moves = set()
-        radius = 2  # Search radius around existing stones, sweet spot for efficiency
+        radius = 2
         rows, cols = np.where(self.board != EMPTY)
         for r, c in zip(rows, cols):
             for i in range(-radius, radius + 1):
@@ -296,8 +269,7 @@ class NegamaxAgent:
                         and self.board[nr, nc] == EMPTY
                     ):
                         if banned_moves_enabled and player == BLACK:
-                            is_banned, reason = self._is_banned_move(nr, nc, player)
-                            if is_banned:
+                            if self._is_banned_move(nr, nc, player)[0]:
                                 continue
                         moves.add((nr, nc))
 
@@ -305,94 +277,156 @@ class NegamaxAgent:
             empty_cells = np.argwhere(self.board == EMPTY)
             return [tuple(cell) for cell in empty_cells]
 
-        # Tiered Move Ordering: Prioritize moves that win or block immediate threats
         opponent = 3 - player
-        my_win_moves = []
-        opponent_win_moves = []
-        for r_m, c_m in moves:
-            # my win
-            self.board[r_m, c_m] = player
-            if self._check_win_by_move(r_m, c_m, player):
-                my_win_moves.append((r_m, c_m))
-            self.board[r_m, c_m] = EMPTY
-
-            # opponent win
-            self.board[r_m, c_m] = opponent
-            if self._check_win_by_move(r_m, c_m, opponent):
-                opponent_win_moves.append((r_m, c_m))
-            self.board[r_m, c_m] = EMPTY
-
+        my_win_moves = [m for m in moves if self._check_win_by_move(m[0], m[1], player)]
         if my_win_moves:
             return my_win_moves
 
-        # heuristic evaluation for non-my-winning moves
-        move_scores = {}
-        for r_m, c_m in moves:
-            if (r_m, c_m) in opponent_win_moves:
-                continue  # has to defense
-            self.board[r_m, c_m] = player
-            move_scores[(r_m, c_m)] = self.evaluate_board(player)
-            self.board[r_m, c_m] = EMPTY
+        opponent_win_moves = [
+            m for m in moves if self._check_win_by_move(m[0], m[1], opponent)
+        ]
 
-        # Combine the tiers: block moves first, then other moves sorted by score.
-        sorted_other_moves = sorted(
-            move_scores.keys(),
-            key=lambda m: move_scores.get(m, -float("inf")),
-            reverse=True,
-        )
+        # --- Threat-based move ordering ---
+        move_scores = {
+            m: self._rate_move_statically(m[0], m[1], player)
+            + self.history_heuristic.get(m, 0)
+            for m in moves
+        }
 
-        return opponent_win_moves + sorted_other_moves
+        sorted_moves = sorted(moves, key=lambda m: move_scores.get(m, 0), reverse=True)
+
+        # --- Final prioritized list construction ---
+        final_ordered_list = []
+        # 1. Hash Move from Transposition Table
+        if hash_move and hash_move in moves:
+            final_ordered_list.append(hash_move)
+        # 2. Urgent: Opponent's winning moves
+        for move in opponent_win_moves:
+            if move not in final_ordered_list:
+                final_ordered_list.append(move)
+        # 3. Killer Moves
+        killers = self.killer_moves[depth]
+        if killers[0] and killers[0] in moves and killers[0] not in final_ordered_list:
+            final_ordered_list.append(killers[0])
+        if killers[1] and killers[1] in moves and killers[1] not in final_ordered_list:
+            final_ordered_list.append(killers[1])
+        # 4. All other moves, sorted by threat+history
+        for move in sorted_moves:
+            if move not in final_ordered_list:
+                final_ordered_list.append(move)
+
+        return final_ordered_list
+
+    def _is_vcf_threat(self, move, player, banned_moves_enabled):
+        r, c = move
+        if self.board[r, c] != EMPTY:
+            return False
+        self.board[r, c] = player
+        patterns = self._find_patterns_fast(player)
+        self.board[r, c] = EMPTY
+        if patterns.get("LIVE_FOUR", 0) > 0:
+            return True
+        if patterns.get("LIVE_THREE", 0) >= 2:
+            if player == WHITE or (player == BLACK and not banned_moves_enabled):
+                return True
+        return False
 
     def negamax(self, depth, alpha, beta, player, banned_moves_enabled):
-        board_hash = self._compute_hash()
+        if time.time() - self.start_time > TIME_LIMIT:
+            raise TimeoutException()
+
+        original_alpha = alpha
+        board_hash = self._compute_hash(player)
+        tt_entry = self.transposition_table.get(board_hash)
+
         if (
-            board_hash in self.transposition_table
-            and self.transposition_table[board_hash]["depth"] >= depth
+            tt_entry
+            and tt_entry["depth"] >= depth
+            and tt_entry["age"] == self.search_generation
         ):
-            entry = self.transposition_table[board_hash]
-            if entry["flag"] == "EXACT":
-                return entry["score"], entry.get("move")
-            elif entry["flag"] == "LOWERBOUND":
-                alpha = max(alpha, entry["score"])
-            elif entry["flag"] == "UPPERBOUND":
-                beta = min(beta, entry["score"])
+            if tt_entry["flag"] == "EXACT":
+                return tt_entry["score"], tt_entry.get("move")
+            elif tt_entry["flag"] == "LOWERBOUND":
+                alpha = max(alpha, tt_entry["score"])
+            elif tt_entry["flag"] == "UPPERBOUND":
+                beta = min(beta, tt_entry["score"])
             if alpha >= beta:
-                return entry["score"], entry.get("move")
+                return tt_entry["score"], tt_entry.get("move")
 
-        if depth == 0 or time.time() - self.start_time > TIME_LIMIT:
-            return self.evaluate_board(player), None
+        if depth == 0:
+            return self.quiescence_search(alpha, beta, player, 2), None
 
-        best_move = None
-        max_score = -float("inf")
+        if depth >= 3 and np.any(self.board):
+            score, _ = self.negamax(
+                depth - 3, -beta, -beta + 1, 3 - player, banned_moves_enabled
+            )
+            score = -score
+            if score >= beta:
+                return beta, None
 
-        # If the first move in the sorted list leads to a win, the search will prioritize it.
-        # If it blocks a threat, it will also be prioritized.
-        moves = self.get_possible_moves(player, banned_moves_enabled)
+        best_move, max_score = None, -float("inf")
+        hash_move = tt_entry.get("move") if tt_entry else None
+        moves = self.get_possible_moves(player, banned_moves_enabled, depth, hash_move)
+
+        if depth == self.current_search_depth:
+            self.total_nodes_at_root = len(moves)
         if not moves:
             return 0, None
-        for r, c in moves:
+
+        for i, move in enumerate(moves):
+            r, c = move
+            if depth == self.current_search_depth:
+                self.nodes_evaluated_at_root = i + 1
+
             self.board[r, c] = player
-            # After making a move, check for win condition to assign max score
+
             if self._check_win_by_move(r, c, player):
-                score = SCORE_TABLE["FIVE"]["mine"] - (20 - depth)
+                score = SCORE_TABLE["FIVE"]["mine"] - (MAX_DEPTH - depth)
             else:
+                reduction = 0
+                extension = 0
+
+                if move == hash_move:
+                    extension = 1
+
+                if self._is_vcf_threat(move, player, banned_moves_enabled):
+                    extension = 1
+
+                if depth >= 3 and i >= 3 and extension == 0:
+                    reduction = 2
+
+                search_depth = depth - 1 + extension - reduction
+                if search_depth < 0:
+                    search_depth = 0
+
                 score, _ = self.negamax(
-                    depth - 1, -beta, -alpha, 3 - player, banned_moves_enabled
+                    search_depth, -beta, -alpha, 3 - player, banned_moves_enabled
                 )
-                score = -score  # Negate: min(a, b) = -max(-a, -b)
+                score = -score
+
+                if reduction > 0 and score > alpha:
+                    re_search_depth = depth - 1 + extension
+                    score, _ = self.negamax(
+                        re_search_depth, -beta, -alpha, 3 - player, banned_moves_enabled
+                    )
+                    score = -score
+
             self.board[r, c] = EMPTY
 
             if score > max_score:
                 max_score = score
                 best_move = (r, c)
 
-            """Alpha-beta pruning"""
             alpha = max(alpha, max_score)
             if alpha >= beta:
+                if move != self.killer_moves[depth][0]:
+                    self.killer_moves[depth][1] = self.killer_moves[depth][0]
+                    self.killer_moves[depth][0] = move
+                self.history_heuristic[move] += depth * depth
                 break
 
         flag = "EXACT"
-        if max_score <= alpha:
+        if max_score <= original_alpha:
             flag = "UPPERBOUND"
         elif max_score >= beta:
             flag = "LOWERBOUND"
@@ -402,50 +436,134 @@ class NegamaxAgent:
             "depth": depth,
             "flag": flag,
             "move": best_move,
+            "age": self.search_generation,
         }
-
         return max_score, best_move
+
+    # --- Quiescence Search and other helpers remain unchanged ---
+    def quiescence_search(self, alpha, beta, player, q_depth):
+        if time.time() - self.start_time > TIME_LIMIT:
+            raise TimeoutException()
+
+        if q_depth == 0:
+            return self.evaluate_board(player)
+
+        stand_pat_score = self.evaluate_board(player)
+        if stand_pat_score >= beta:
+            return beta
+        alpha = max(alpha, stand_pat_score)
+
+        moves = self._get_qsearch_moves(player)
+
+        for move in moves:
+            r, c = move
+            self.board[r, c] = player
+            score = -self.quiescence_search(-beta, -alpha, 3 - player, q_depth - 1)
+            self.board[r, c] = EMPTY
+            if score >= beta:
+                return beta
+            alpha = max(alpha, score)
+        return alpha
+
+    def _get_qsearch_moves(self, player):
+        opponent = 3 - player
+        threatening_moves = []
+        empty_cells = set()
+        rows, cols = np.where(self.board != EMPTY)
+        for r, c in zip(rows, cols):
+            for i in range(-1, 2):
+                for j in range(-1, 2):
+                    if i == 0 and j == 0:
+                        continue
+                    nr, nc = r + i, c + j
+                    if (
+                        0 <= nr < self.board_size
+                        and 0 <= nc < self.board_size
+                        and self.board[nr, nc] == EMPTY
+                    ):
+                        empty_cells.add((nr, nc))
+
+        for r, c in empty_cells:
+            self.board[r, c] = player
+            if self._check_for_four(r, c, player):
+                threatening_moves.append((r, c))
+            self.board[r, c] = EMPTY
+
+            self.board[r, c] = opponent
+            if self._check_for_four(r, c, opponent):
+                if (r, c) not in threatening_moves:
+                    threatening_moves.append((r, c))
+            self.board[r, c] = EMPTY
+        return threatening_moves
+
+    def _check_for_four(self, r, c, player):
+        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+            count = 1
+            for i in range(1, 4):
+                nr, nc = r + i * dr, c + i * dc
+                if not (
+                    0 <= nr < self.board_size
+                    and 0 <= nc < self.board_size
+                    and self.board[nr, nc] == player
+                ):
+                    break
+                count += 1
+            for i in range(1, 4):
+                nr, nc = r - i * dr, c - i * dc
+                if not (
+                    0 <= nr < self.board_size
+                    and 0 <= nc < self.board_size
+                    and self.board[nr, nc] == player
+                ):
+                    break
+                count += 1
+            if count >= 4:
+                return True
+        return False
 
     def find_best_move(self, board_state, player, banned_moves_enabled):
         self.board = np.array(board_state)
         self.start_time = time.time()
-        self.transposition_table.clear()
+        self.search_generation += 1
+        self.killer_moves = [[None, None] for _ in range(MAX_DEPTH + 1)]
+        self.history_heuristic.clear()
+
         best_move_so_far = None
 
-        num_stones = np.count_nonzero(self.board)
-        if num_stones < 5:
-            pass
+        for depth in range(1, MAX_DEPTH + 1):
+            try:
+                self.current_search_depth = depth
+                print(f"--- Starting search at depth {depth} ---")
 
-        max_depth = 20
-        for depth in range(1, max_depth + 1):
-            print(f"--- Starting search at depth {depth} ---")
-            score, move = self.negamax(
-                depth, -float("inf"), float("inf"), player, banned_moves_enabled
-            )
-
-            elapsed_time = time.time() - self.start_time
-            if elapsed_time > TIME_LIMIT:
-                print(
-                    f"Time limit reached during depth {depth}. Returning best move from depth {depth-1}."
+                score, move = self.negamax(
+                    depth, -float("inf"), float("inf"), player, banned_moves_enabled
                 )
-                break
 
-            best_move_so_far = move
-            print(
-                f"Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
-            )
+                best_move_so_far = move
+                elapsed_time = time.time() - self.start_time
+                print(
+                    f"Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
+                )
 
-            if abs(score) >= SCORE_TABLE["FIVE"]["mine"] - 50:
-                print("Terminal sequence found. Halting search.")
+                if abs(score) >= SCORE_TABLE["FIVE"]["mine"] - MAX_DEPTH:
+                    print("Terminal sequence found. Halting search.")
+                    break
+
+            except TimeoutException:
+                print(f"Timeout! Search at depth {depth} was forcefully interrupted.")
+                print(f"Returning best move from last completed depth ({depth-1}).")
                 break
 
         if not best_move_so_far:
             print(
-                "No best move found from search, falling back to first possible move."
+                "Search failed or timed out at depth 1. Falling back to first possible move."
             )
-            possible_moves = self.get_possible_moves(player, banned_moves_enabled)
+            possible_moves = self.get_possible_moves(
+                player, banned_moves_enabled, 0, None
+            )
             if possible_moves:
-                return possible_moves[0]
+                best_move_so_far = possible_moves[0]
+
         return best_move_so_far
 
 
@@ -463,7 +581,6 @@ def get_move():
 
     agent.board = np.array(board)
 
-    # Swap2 and Normal move finding logic
     if game_phase == "P2_CHOOSE":
         score = agent.evaluate_board(BLACK)
         if score > SCORE_TABLE["LIVE_THREE"]["mine"]:
@@ -486,17 +603,22 @@ def get_move():
         if best_move:
             return jsonify({"move": [int(best_move[0]), int(best_move[1])]})
         else:
-            return jsonify({"move": None})
-
+            moves = agent.get_possible_moves(
+                color_to_play, banned_moves_enabled, 0, None
+            )
+            return (
+                jsonify({"move": [int(moves[0][0]), int(moves[0][1])]})
+                if moves
+                else jsonify({"move": None})
+            )
     else:
-        moves = agent.get_possible_moves(1, False)
-        if moves:
-            best_move = moves[0]
-            return jsonify({"move": [int(best_move[0]), int(best_move[1])]})
-        else:
-            return jsonify({"move": None})
+        moves = agent.get_possible_moves(1, False, 0, None)
+        return (
+            jsonify({"move": [int(moves[0][0]), int(moves[0][1])]})
+            if moves
+            else jsonify({"move": None})
+        )
 
 
 if __name__ == "__main__":
-    # For production, use a proper WSGI server like Gunicorn or Waitress.
     app.run(port=5003, debug=False)
