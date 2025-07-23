@@ -7,14 +7,19 @@ import logging
 from collections import defaultdict
 import numpy as np
 from flask import Flask, request, jsonify
+import os
+from datetime import datetime
+
 
 # --- Logging Setup ---
+if not os.path.exists("./logs"):
+    os.makedirs("./logs")
+
+log_filename = f"./logs/negamax_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("./logs/negamax_agent.log"),
-    ],
+    handlers=[logging.FileHandler(log_filename), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,7 @@ WHITE = 2
 TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
 MAX_DEPTH = 50  # Max search depth for IDDFS
 MIN_DEPTH = 3  # The minimum depth the AI must complete, regardless of time.
+
 
 """
 The values for opponent's threats ('opp') are now significantly higher than 'mine'
@@ -44,7 +50,6 @@ SCORE_TABLE = {
     "SLEEPY_TWO": {"mine": 100, "opp": 200},
     "SINGLE": {"mine": 10, "opp": 20},
 }
-
 PATTERNS_PLAYER = {
     "FIVE": re.compile(r"11111"),
     "LIVE_FOUR": re.compile(r"011110"),
@@ -54,11 +59,15 @@ PATTERNS_PLAYER = {
     "LIVE_TWO": re.compile(r"001100|01010|010010"),
     "SLEEPY_TWO": re.compile(r"21100|00112|21010|01012|21001|10012"),
 }
+
+# Zobrist hashing table for fast board state hashing
 zobrist_table = np.random.randint(
     1, 2**63 - 1, (GRID_SIZE, GRID_SIZE, 3), dtype=np.uint64
 )
 zobrist_player_turn = np.random.randint(1, 2**63 - 1, dtype=np.uint64)
 
+
+# Flask app setup
 app = Flask(__name__)
 
 
