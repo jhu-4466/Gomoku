@@ -917,7 +917,11 @@ class NewGameDialog(QDialog):
 class GomokuApp(QMainWindow):
     def __init__(self):
         super().__init__()
+
         self.setWindowTitle("Gomoku")
+        self.setFixedSize(self.sizeHint())
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowMaximizeButtonHint)
+
         self.game_engine = GomokuBoard(self)
         self.setCentralWidget(self.game_engine)
         self.game_engine.gameOverSignal.connect(self.gameover_handler)
