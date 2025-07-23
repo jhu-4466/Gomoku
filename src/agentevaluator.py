@@ -1,20 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Gomoku Agent Performance Evaluation Module - Batch Processing & Excel Reporting
-Author: Gemini
-Date: 2025-07-15
-
-This module analyzes all game history JSON files within a specified directory,
-generates detailed statistics for each game, aggregates the results, and
-exports a comprehensive report to a single Excel sheet with a summary row.
-
-Dependencies:
-    pip install pandas openpyxl
-
-Usage:
-    python evaluation_module.py [path/to/game_history_directory]
-    (If no path is provided, it defaults to './game_history/')
-"""
 import json
 import os
 import sys
@@ -94,10 +78,6 @@ class AgentEvaluator:
         board_after = board_before.copy()
         board_after[r, c] = player_color
         our_threats = self._get_line_patterns(board_after, r, c, player_color)
-        if our_threats["FIVE"] > 0:
-            self.stats[player_name]["offense"]["Fives Created"] += 1
-        if our_threats["LIVE_FOUR"] > 0:
-            self.stats[player_name]["offense"]["Live Fours Created"] += 1
         if our_threats["LIVE_THREE"] > 0:
             self.stats[player_name]["offense"]["Live Threes Created"] += 1
 
@@ -121,6 +101,7 @@ class AgentEvaluator:
             "total_moves": 0,
             "total_thinking_time": 0.0,
             "timed_moves": 0,
+            "search_depths": [],  # --- NEW: List to store search depths ---
         }
 
         board = np.zeros((GRID_SIZE, GRID_SIZE), dtype=int)
@@ -135,6 +116,12 @@ class AgentEvaluator:
                         "thinking_time"
                     ]
                     self.stats[agent_name]["timed_moves"] += 1
+
+                # --- NEW: Record search depth if available ---
+                if "search_depth" in move_info:
+                    self.stats[agent_name]["search_depths"].append(
+                        move_info["search_depth"]
+                    )
 
                 self.analyze_move(
                     board.copy(), move_info, move_player_name, move_info["color"]
@@ -156,7 +143,7 @@ class AgentEvaluator:
         result = "Draw"
         if winner_name == AGENT_TO_EVALUATE:
             result = "Win"
-        elif winner_name != "None" and winner_name != "N/A":
+        elif winner_name != "None" and winner_name != "N/A" and winner_name != "Draw":
             result = "Loss"
 
         avg_time = (
@@ -164,6 +151,10 @@ class AgentEvaluator:
             if agent_stats["timed_moves"] > 0
             else 0
         )
+
+        depths = agent_stats["search_depths"]
+        avg_depth = np.mean(depths) if depths else 0
+        max_depth = np.max(depths) if depths else 0
 
         return {
             "Game ID": self.history["game_id"],
@@ -177,11 +168,11 @@ class AgentEvaluator:
             "Result": result,
             "Agent Total Moves": agent_stats["total_moves"],
             "Agent Avg. Time (s)": round(avg_time, 4),
+            "Agent Avg. Depth": round(avg_depth, 2),  # --- NEW COLUMN ---
+            "Agent Max Depth": int(max_depth),  # --- NEW COLUMN ---
             "Blocked Fives": agent_stats["defense"]["Blocked Fives"],
             "Blocked Live Fours": agent_stats["defense"]["Blocked Live Fours"],
             "Blocked Live Threes": agent_stats["defense"]["Blocked Live Threes"],
-            "Fives Created": agent_stats["offense"]["Fives Created"],
-            "Live Fours Created": agent_stats["offense"]["Live Fours Created"],
             "Live Threes Created": agent_stats["offense"]["Live Threes Created"],
         }
 
@@ -243,6 +234,16 @@ class BatchEvaluator:
         ).sum()
         overall_avg_time = (total_time / total_moves) if total_moves > 0 else 0
 
+        total_weighted_depth = (
+            details_df["Agent Avg. Depth"] * details_df["Agent Total Moves"]
+        ).sum()
+        overall_avg_depth = (
+            (total_weighted_depth / total_moves) if total_moves > 0 else 0
+        )
+        overall_max_depth = (
+            details_df["Agent Max Depth"].max() if not details_df.empty else 0
+        )
+
         summary_row = {
             "Game ID": "SUMMARY",
             "Agent": AGENT_TO_EVALUATE,
@@ -251,12 +252,13 @@ class BatchEvaluator:
             "Result": f"{win_rate:.2f}% Win Rate",
             "Agent Total Moves": details_df["Agent Total Moves"].sum(),
             "Agent Avg. Time (s)": round(overall_avg_time, 4),
-            "Blocked Fives": details_df["Blocked Fives"].sum(),
-            "Blocked Live Fours": details_df["Blocked Live Fours"].sum(),
-            "Blocked Live Threes": details_df["Blocked Live Threes"].sum(),
-            "Fives Created": details_df["Fives Created"].sum(),
-            "Live Fours Created": details_df["Live Fours Created"].sum(),
-            "Live Threes Created": details_df["Live Threes Created"].sum(),
+            "Agent Avg. Depth": round(overall_avg_depth, 2),
+            "Agent Max Depth": "N/A",
+            "Blocked Fives": round(details_df["Blocked Fives"].mean(), 2),
+            "Blocked Live Fours": round(details_df["Blocked Live Fours"].mean(), 2),
+            "Blocked Live Threes": round(details_df["Blocked Live Threes"].mean(), 2),
+            "Live Fours Created": round(details_df["Live Fours Created"].mean(), 2),
+            "Live Threes Created": round(details_df["Live Threes Created"].mean(), 2),
         }
 
         # Append summary row
