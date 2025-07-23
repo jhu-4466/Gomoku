@@ -567,20 +567,21 @@ class NegamaxAgent:
         self.search_generation += 1
         self.killer_moves = [[None, None] for _ in range(MAX_DEPTH + 1)]
         self.history_heuristic.clear()
-
         best_move_so_far = None
+        final_search_depth = 0
 
         for depth in range(1, MAX_DEPTH + 1):
             try:
                 self.current_search_depth = depth
                 logger.info(f"--- Starting search at depth {depth} ---")
-
                 score, move = self.negamax(
                     depth, -float("inf"), float("inf"), player, banned_moves_enabled
                 )
 
-                if move is None:
+                if move is not None:
                     best_move_so_far = move
+                    final_search_depth = depth
+
                 elapsed_time = time.time() - self.start_time
                 logger.info(
                     f"Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
@@ -593,8 +594,9 @@ class NegamaxAgent:
                 logger.warning(
                     f"Timeout! Search at depth {depth} was forcefully interrupted."
                 )
+                final_search_depth = depth - 1
                 logger.info(
-                    f"Returning best move from last completed depth ({depth-1})."
+                    f"Returning best move from last completed depth ({final_search_depth})."
                 )
                 break
             except Exception:
@@ -605,15 +607,16 @@ class NegamaxAgent:
 
         if not best_move_so_far:
             logger.warning(
-                "Search failed or timed out at depth 1. Falling back to first possible move."
+                "Search failed or timed out. Falling back to first possible move."
             )
             possible_moves = self.get_possible_moves(
                 player, banned_moves_enabled, 0, None
             )
             if possible_moves:
                 best_move_so_far = possible_moves[0]
+            final_search_depth = 0
 
-        return best_move_so_far
+        return best_move_so_far, final_search_depth
 
     def reset_for_new_game(self):
         """
@@ -668,10 +671,18 @@ def get_move():
             return jsonify({"choice": choice})
 
         if color_to_play:
-            best_move = agent.find_best_move(board, color_to_play, banned_moves_enabled)
+            best_move, search_depth = agent.find_best_move(
+                board, color_to_play, banned_moves_enabled
+            )
             if best_move:
-                logger.info(f"Move found: {best_move}")
-                return jsonify({"move": [int(best_move[0]), int(best_move[1])]})
+                logger.info(f"Move found: {best_move} at depth {search_depth}")
+                # --- MODIFIED: Add search_depth to the JSON response ---
+                return jsonify(
+                    {
+                        "move": [int(best_move[0]), int(best_move[1])],
+                        "search_depth": search_depth,
+                    }
+                )
             else:
                 logger.warning("No best move found, trying to find any possible move.")
                 moves = agent.get_possible_moves(
@@ -679,10 +690,15 @@ def get_move():
                 )
                 if moves:
                     logger.info(f"Fallback move: {moves[0]}")
-                    return jsonify({"move": [int(moves[0][0]), int(moves[0][1])]})
+                    return jsonify(
+                        {
+                            "move": [int(moves[0][0]), int(moves[0][1])],
+                            "search_depth": 0,
+                        }
+                    )
                 else:
                     logger.error("No possible moves available.")
-                    return jsonify({"move": None})
+                    return jsonify({"move": None, "search_depth": 0})
         else:
             logger.warning(
                 "Request received without a 'color_to_play'. Falling back to default."

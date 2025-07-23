@@ -220,13 +220,15 @@ class GomokuCanvas(QWidget):
         ]:
             self.handle_swap2_placement(row, col)
 
-    def agent_place_stone(self, row, col, thinking_time):
+    def agent_place_stone(self, row, col, thinking_time, search_depth=0):
         if self.game_phase in [GamePhase.SWAP2_P1_PLACE_3, GamePhase.SWAP2_P2_PLACE_2]:
-            self.handle_swap2_placement(row, col, thinking_time)
+            self.handle_swap2_placement(row, col, thinking_time, search_depth)
         else:
-            self.handle_normal_move(row, col, thinking_time=thinking_time)
+            self.handle_normal_move(
+                row, col, thinking_time=thinking_time, search_depth=search_depth
+            )
 
-    def handle_swap2_placement(self, row, col, thinking_time=None):
+    def handle_swap2_placement(self, row, col, thinking_time=None, search_depth=0):
         if not self.swap2_stones_to_place:
             print("Warning: handle_swap2_placement called with no stones to place.")
             return
@@ -245,6 +247,8 @@ class GomokuCanvas(QWidget):
         }
         if thinking_time is not None:
             move_data["thinking_time"] = round(thinking_time, 4)
+        if self.player_names.get(turn_player_id) == "Negamax AI":
+            move_data["search_depth"] = search_depth
         self.move_history.append(move_data)
 
         self.update()
@@ -285,7 +289,7 @@ class GomokuCanvas(QWidget):
         self.game_phase = GamePhase.NORMAL
         self.state_change()
 
-    def handle_normal_move(self, row, col, thinking_time=None):
+    def handle_normal_move(self, row, col, thinking_time=None, search_depth=0):
         if self.board[row][col] != 0:
             print(
                 f"Warning: Attempted to place piece on occupied cell ({row}, {col}). Ignoring."
@@ -316,6 +320,8 @@ class GomokuCanvas(QWidget):
         }
         if thinking_time is not None:
             move_data["thinking_time"] = round(thinking_time, 4)
+        if self.player_names.get(self.current_player_id) == "Negamax AI":
+            move_data["search_depth"] = search_depth
         self.move_history.append(move_data)
 
         if self.check_win(row, col, color_to_play):
@@ -694,7 +700,7 @@ class GomokuBoard(QWidget):
 
 
 class GomokuAgentHandler(QThread):
-    movedSignal = pyqtSignal(int, int, float)
+    movedSignal = pyqtSignal(int, int, float, int)
     p2ChoiceSignal = pyqtSignal(str)
     p1ChoiceSignal = pyqtSignal(str)
     reconnectSignal = pyqtSignal(str)
@@ -750,12 +756,14 @@ class GomokuAgentHandler(QThread):
         payload = self.build_payload(state)
         response_data, thinking_time = self.make_request(player_config, payload)
         move = response_data.get("move")
+        search_depth = response_data.get("search_depth", 0)
+
         if move and self.running:
             row, col = move[0], move[1]
             if self.game_engine.canvas.board[row][col] != 0:
                 self.gameOverSignal.emit(f"Error: AI returned invalid move.")
                 return
-            self.movedSignal.emit(row, col, thinking_time)
+            self.movedSignal.emit(row, col, thinking_time, search_depth)
 
     def build_payload(self, state):
         payload = {
@@ -766,10 +774,8 @@ class GomokuAgentHandler(QThread):
             "game_phase": state["game_phase"],
             "move_history": self.game_engine.canvas.move_history,
         }
-
         if state["move_count"] < 2:
             payload["new_game"] = True
-
         return payload
 
     def make_request(self, player_config, payload):
@@ -917,7 +923,6 @@ class NewGameDialog(QDialog):
 class GomokuApp(QMainWindow):
     def __init__(self):
         super().__init__()
-
         self.setWindowTitle("Gomoku")
         self.setFixedSize(self.sizeHint())
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowMaximizeButtonHint)
