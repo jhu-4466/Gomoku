@@ -168,8 +168,8 @@ class AgentEvaluator:
             "Result": result,
             "Agent Total Moves": agent_stats["total_moves"],
             "Agent Avg. Time (s)": round(avg_time, 4),
-            "Agent Avg. Depth": round(avg_depth, 2),  # --- NEW COLUMN ---
-            "Agent Max Depth": int(max_depth),  # --- NEW COLUMN ---
+            "Agent Avg. Depth": round(avg_depth, 2),
+            "Agent Max Depth": int(max_depth),
             "Blocked Fives": agent_stats["defense"]["Blocked Fives"],
             "Blocked Live Fours": agent_stats["defense"]["Blocked Live Fours"],
             "Blocked Live Threes": agent_stats["defense"]["Blocked Live Threes"],
