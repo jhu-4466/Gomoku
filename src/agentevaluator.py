@@ -257,7 +257,6 @@ class BatchEvaluator:
             "Blocked Fives": round(details_df["Blocked Fives"].mean(), 2),
             "Blocked Live Fours": round(details_df["Blocked Live Fours"].mean(), 2),
             "Blocked Live Threes": round(details_df["Blocked Live Threes"].mean(), 2),
-            "Live Fours Created": round(details_df["Live Fours Created"].mean(), 2),
             "Live Threes Created": round(details_df["Live Threes Created"].mean(), 2),
         }
 
