@@ -758,7 +758,7 @@ class GomokuAgentHandler(QThread):
             self.movedSignal.emit(row, col, thinking_time)
 
     def build_payload(self, state):
-        return {
+        payload = {
             "board": self.game_engine.canvas.board,
             "player_id": state["current_player_id"],
             "color_to_play": state["player_colors"][state["current_player_id"]],
@@ -766,6 +766,11 @@ class GomokuAgentHandler(QThread):
             "game_phase": state["game_phase"],
             "move_history": self.game_engine.canvas.move_history,
         }
+
+        if state["move_count"] < 2:
+            payload["new_game"] = True
+
+        return payload
 
     def make_request(self, player_config, payload):
         player_url = player_config["url"]

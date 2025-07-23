@@ -3,9 +3,20 @@
 import time
 import json
 import re
+import logging
 from collections import defaultdict
 import numpy as np
 from flask import Flask, request, jsonify
+
+# --- Logging Setup ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("./logs/negamax_agent.log"),
+    ],
+)
+logger = logging.getLogger(__name__)
 
 
 # --- Configuration ---
@@ -26,7 +37,7 @@ SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 100_000_000},
     "LIVE_FOUR": {"mine": 10_000_000, "opp": 50_000_000},
     "RUSH_FOUR": {"mine": 1_000_000, "opp": 2_000_000},
-    "DOUBLE_THREE": {"mine": 1_000_000, "opp": 10_000_000},
+    "DOUBLE_THREE": {"mine": 1_000_000, "opp": 50_000_000},
     "LIVE_THREE": {"mine": 500_000, "opp": 1_500_000},
     "SLEEPY_THREE": {"mine": 5_000, "opp": 10_000},
     "LIVE_TWO": {"mine": 1_000, "opp": 2_000},
@@ -108,12 +119,18 @@ class NegamaxAgent:
         return False
 
     def _is_banned_move(self, r, c, player):
+        if player != BLACK:
+            return False, ""
         if self.board[r, c] != EMPTY:
             return False, ""
 
         self.board[r, c] = player
+        if self._check_win_by_move(r, c, player):
+            self.board[r, c] = EMPTY  # Revert board
+            return False, ""
 
-        fours, threes, overline = 0, 0, False
+        # --- Check for overline ---
+        is_overline = False
         for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             count = 1
             for i in range(1, 6):
@@ -135,23 +152,37 @@ class NegamaxAgent:
                     break
                 count += 1
             if count > 5:
-                overline = True
+                is_overline = True
                 break
+        if is_overline:
+            self.board[r, c] = EMPTY
+            return True, "Overline"
 
-            threes_in_line, fours_in_line = self._count_patterns_at(
-                r, c, dr, dc, player
-            )
-            threes += threes_in_line
-            fours += fours_in_line
+        # --- Check for live three and four ---
+        threes, fours = 0, 0
+        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+            # Create a line of 9 points centered on the move
+            line = [
+                (
+                    self.board[r + i * dr][c + i * dc]
+                    if 0 <= r + i * dr < self.board_size
+                    and 0 <= c + i * dc < self.board_size
+                    else -1  # Use -1 for off-board
+                )
+                for i in range(-4, 5)
+            ]
+
+            line_str = "".join(map(str, line)).replace(str(WHITE), str(EMPTY))
+            if "01110" in line_str:
+                threes += 1
+            if "1111" in line_str:
+                fours += 1
 
         self.board[r, c] = EMPTY
-        if overline:
-            return True, "Overline"
         if threes >= 2:
             return True, "Three-Three"
         if fours >= 2:
             return True, "Four-Four"
-
         return False, ""
 
     def _count_patterns_at(self, r, c, dr, dc, player):
@@ -533,7 +564,7 @@ class NegamaxAgent:
         for depth in range(1, MAX_DEPTH + 1):
             try:
                 self.current_search_depth = depth
-                print(f"--- Starting search at depth {depth} ---")
+                logger.info(f"--- Starting search at depth {depth} ---")
 
                 score, move = self.negamax(
                     depth, -float("inf"), float("inf"), player, banned_moves_enabled
@@ -541,21 +572,30 @@ class NegamaxAgent:
 
                 best_move_so_far = move
                 elapsed_time = time.time() - self.start_time
-                print(
+                logger.info(
                     f"Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
                 )
 
                 if abs(score) >= SCORE_TABLE["FIVE"]["mine"] - MAX_DEPTH:
-                    print("Terminal sequence found. Halting search.")
+                    logger.info("Terminal sequence found. Halting search.")
                     break
 
             except TimeoutException:
-                print(f"Timeout! Search at depth {depth} was forcefully interrupted.")
-                print(f"Returning best move from last completed depth ({depth-1}).")
+                logger.warning(
+                    f"Timeout! Search at depth {depth} was forcefully interrupted."
+                )
+                logger.info(
+                    f"Returning best move from last completed depth ({depth-1})."
+                )
+                break
+            except Exception:
+                logger.exception(
+                    f"An unexpected error occurred during search at depth {depth}."
+                )
                 break
 
         if not best_move_so_far:
-            print(
+            logger.warning(
                 "Search failed or timed out at depth 1. Falling back to first possible move."
             )
             possible_moves = self.get_possible_moves(
@@ -566,6 +606,14 @@ class NegamaxAgent:
 
         return best_move_so_far
 
+    def reset_for_new_game(self):
+        """
+        Resets the agent's state for a new game.
+        Clears the transposition table, history heuristic, and killer moves.
+        """
+        self.transposition_table.clear()
+        logger.info("New game signal received. Transposition table has been cleared.")
+
 
 # --- Flask HTTP Server ---
 agent = NegamaxAgent(GRID_SIZE)
@@ -573,52 +621,76 @@ agent = NegamaxAgent(GRID_SIZE)
 
 @app.route("/get_move", methods=["POST"])
 def get_move():
-    data = request.get_json()
-    board = data["board"]
-    color_to_play = data.get("color_to_play")
-    banned_moves_enabled = data.get("banned_moves_enabled", False)
-    game_phase = data.get("game_phase", "NORMAL")
+    try:
+        data = request.get_json()
+        board = data["board"]
+        color_to_play = data.get("color_to_play")
+        banned_moves_enabled = data.get("banned_moves_enabled", False)
+        game_phase = data.get("game_phase", "NORMAL")
+        is_new_game = data.get("new_game", False)
+        if is_new_game:
+            agent.reset_for_new_game()
 
-    agent.board = np.array(board)
-
-    if game_phase == "P2_CHOOSE":
-        score = agent.evaluate_board(BLACK)
-        if score > SCORE_TABLE["LIVE_THREE"]["mine"]:
-            return jsonify({"choice": "TAKE_BLACK"})
-        elif score < -SCORE_TABLE["LIVE_THREE"]["opp"]:
-            return jsonify({"choice": "TAKE_WHITE"})
-        else:
-            return jsonify({"choice": "PLACE_2"})
-
-    if game_phase == "P1_CHOOSE":
-        black_score = agent.evaluate_board(BLACK)
-        white_score = agent.evaluate_board(WHITE)
-        if black_score >= white_score:
-            return jsonify({"choice": "CHOOSE_BLACK"})
-        else:
-            return jsonify({"choice": "CHOOSE_WHITE"})
-
-    if color_to_play:
-        best_move = agent.find_best_move(board, color_to_play, banned_moves_enabled)
-        if best_move:
-            return jsonify({"move": [int(best_move[0]), int(best_move[1])]})
-        else:
-            moves = agent.get_possible_moves(
-                color_to_play, banned_moves_enabled, 0, None
-            )
-            return (
-                jsonify({"move": [int(moves[0][0]), int(moves[0][1])]})
-                if moves
-                else jsonify({"move": None})
-            )
-    else:
-        moves = agent.get_possible_moves(1, False, 0, None)
-        return (
-            jsonify({"move": [int(moves[0][0]), int(moves[0][1])]})
-            if moves
-            else jsonify({"move": None})
+        logger.info(
+            f"Received request for game_phase: {game_phase}, color_to_play: {color_to_play}"
         )
+
+        agent.board = np.array(board)
+
+        if game_phase == "P2_CHOOSE":
+            score = agent.evaluate_board(BLACK)
+            choice = "PLACE_2"
+            if score > SCORE_TABLE["LIVE_THREE"]["mine"]:
+                choice = "TAKE_BLACK"
+            elif score < -SCORE_TABLE["LIVE_THREE"]["opp"]:
+                choice = "TAKE_WHITE"
+            logger.info(f"P2_CHOOSE evaluation score: {score}, Choice: {choice}")
+            return jsonify({"choice": choice})
+
+        if game_phase == "P1_CHOOSE":
+            black_score = agent.evaluate_board(BLACK)
+            white_score = agent.evaluate_board(WHITE)
+            choice = "CHOOSE_WHITE"
+            if black_score >= white_score:
+                choice = "CHOOSE_BLACK"
+            logger.info(
+                f"P1_CHOOSE scores (B/W): {black_score}/{white_score}, Choice: {choice}"
+            )
+            return jsonify({"choice": choice})
+
+        if color_to_play:
+            best_move = agent.find_best_move(board, color_to_play, banned_moves_enabled)
+            if best_move:
+                logger.info(f"Move found: {best_move}")
+                return jsonify({"move": [int(best_move[0]), int(best_move[1])]})
+            else:
+                logger.warning("No best move found, trying to find any possible move.")
+                moves = agent.get_possible_moves(
+                    color_to_play, banned_moves_enabled, 0, None
+                )
+                if moves:
+                    logger.info(f"Fallback move: {moves[0]}")
+                    return jsonify({"move": [int(moves[0][0]), int(moves[0][1])]})
+                else:
+                    logger.error("No possible moves available.")
+                    return jsonify({"move": None})
+        else:
+            logger.warning(
+                "Request received without a 'color_to_play'. Falling back to default."
+            )
+            moves = agent.get_possible_moves(1, False, 0, None)
+            if moves:
+                return jsonify({"move": [int(moves[0][0]), int(moves[0][1])]})
+            else:
+                return jsonify({"move": None})
+    except Exception:
+        logger.exception("An unhandled error occurred in the get_move endpoint.")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 
 if __name__ == "__main__":
-    app.run(port=5003, debug=False)
+    try:
+        logger.info("Starting Flask server on port 5003.")
+        app.run(port=5003, debug=False)
+    except Exception:
+        logger.critical("Failed to start the Flask server.", exc_info=True)

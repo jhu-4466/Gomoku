@@ -3,3 +3,4 @@ gomoku_env
 game_history
 evaluation
 test.py
+logs
