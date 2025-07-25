@@ -252,10 +252,9 @@ class NegamaxAgent:
 
         my_score = sum(SCORE_TABLE[p]["mine"] * c for p, c in my_patterns.items())
         op_score = sum(SCORE_TABLE[p]["opp"] * c for p, c in op_patterns.items())
-
-        if my_patterns.get("LIVE_THREE", 0) >= 2:
+        if my_patterns.get("LIVE_THREE", 0) >= 2:  # Double Live Three
             my_score += SCORE_TABLE["DOUBLE_THREE"]["mine"]
-        if op_patterns.get("LIVE_THREE", 0) >= 2:
+        if op_patterns.get("LIVE_THREE", 0) >= 2:  # Double Live Three
             op_score += SCORE_TABLE["DOUBLE_THREE"]["opp"]
 
         return my_score - op_score
@@ -299,20 +298,21 @@ class NegamaxAgent:
         score = 0
         opponent = 3 - player
 
+        # Showing the priority of stones patterns that the coefficient values are useless actually.
         # Offensive score
         self.board[r, c] = player
         my_patterns = self._find_patterns_fast(player)
-        score += my_patterns.get("LIVE_FOUR", 0) * 100000
-        score += my_patterns.get("RUSH_FOUR", 0) * 10000
-        score += my_patterns.get("LIVE_THREE", 0) * 5000
+        score += my_patterns.get("LIVE_FOUR", 0) * SCORE_TABLE["LIVE_FOUR"]["mine"]
+        score += my_patterns.get("RUSH_FOUR", 0) * SCORE_TABLE["RUSH_FOUR"]["mine"]
+        score += my_patterns.get("LIVE_THREE", 0) * SCORE_TABLE["LIVE_THREE"]["mine"]
         self.board[r, c] = EMPTY
 
         # Defensive score
         self.board[r, c] = opponent
         op_patterns = self._find_patterns_fast(opponent)
-        score += op_patterns.get("LIVE_FOUR", 0) * 75000
-        score += op_patterns.get("RUSH_FOUR", 0) * 7500
-        score += op_patterns.get("LIVE_THREE", 0) * 2500
+        score += op_patterns.get("LIVE_FOUR", 0) * SCORE_TABLE["LIVE_FOUR"]["opp"]
+        score += op_patterns.get("RUSH_FOUR", 0) * SCORE_TABLE["RUSH_FOUR"]["opp"]
+        score += op_patterns.get("LIVE_THREE", 0) * SCORE_TABLE["LIVE_THREE"]["opp"]
         self.board[r, c] = EMPTY
 
         return score
