@@ -678,9 +678,6 @@ class GomokuBoard(QWidget):
             dialog.setWindowTitle("Player 1's Final Choice")
             dialog.setText("Player 1, choose your color for the rest of the game:")
             dialog.setIcon(QMessageBox.Question)
-            dialog.setInformativeText(
-                "Note: Closing this window will default to 'Choose White'."
-            )
             black_btn = dialog.addButton("Choose Black", QMessageBox.AcceptRole)
             white_btn = dialog.addButton("Choose White", QMessageBox.AcceptRole)
             dialog.exec_()
@@ -740,9 +737,9 @@ class GomokuAgentHandler(QThread):
             game_phase = state["game_phase"]
 
             if game_phase == GamePhase.SWAP2_P2_CHOOSE_ACTION and player_id == 2:
-                self.get_ai_swap2_choice(player_config, state, "P2_CHOOSE")
+                self.get_ai_swap2_choice(player_config, state, game_phase)
             elif game_phase == GamePhase.SWAP2_P1_CHOOSE_COLOR and player_id == 1:
-                self.get_ai_swap2_choice(player_config, state, "P1_CHOOSE")
+                self.get_ai_swap2_choice(player_config, state, game_phase)
             else:
                 self.get_ai_move(player_config, state)
             self.msleep(100)
@@ -753,9 +750,9 @@ class GomokuAgentHandler(QThread):
         response_data, _ = self.make_request(player_config, payload)
         choice = response_data.get("choice")
         if choice and self.running:
-            if choice_type == "P2_CHOOSE":
+            if choice_type == GamePhase.SWAP2_P2_CHOOSE_ACTION:
                 self.p2ChoiceSignal.emit(choice)
-            elif choice_type == "P1_CHOOSE":
+            elif choice_type == GamePhase.SWAP2_P1_CHOOSE_COLOR:
                 self.p1ChoiceSignal.emit(choice)
 
     def get_ai_move(self, player_config, state):

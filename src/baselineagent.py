@@ -14,14 +14,6 @@ class GamePhase:
     SWAP2_P1_CHOOSE_COLOR = 4  # Note: App sends "P1_CHOOSE" string for this
 
 
-# A simple opening book for Swap2 P1's first 3 moves.
-OPENING_BOOK = [
-    [(7, 7), (7, 8), (8, 7)],  # Central pattern
-    [(7, 7), (8, 8), (6, 6)],  # Diagonal pattern
-    [(7, 7), (7, 6), (6, 8)],  # Another solid central pattern
-]
-
-
 # --- Banned Move & Evaluation Logic ---
 def _get_char(board, r, c):
     if 0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE:
@@ -128,30 +120,19 @@ def get_move():
     game_phase = data.get("game_phase")
 
     # --- Handle Swap2 Choices ---
-    if game_phase == "P2_CHOOSE":
-        if count_open_threes(board, 1) > 0:
-            return jsonify({"choice": "TAKE_BLACK"})
-        if count_open_threes(board, 1) == 0 and count_open_threes(board, 2) == 0:
-            return jsonify({"choice": "PLACE_2"})
-        else:
-            return jsonify({"choice": "TAKE_WHITE"})
+    if game_phase == GamePhase.SWAP2_P2_CHOOSE_ACTION:
+        choice = random.choice(["TAKE_BLACK", "TAKE_WHITE", "PLACE_2"])
+        return jsonify({"choice": choice})
 
-    if game_phase == "P1_CHOOSE":
-        if count_open_threes(board, 1) >= count_open_threes(board, 2):
-            return jsonify({"choice": "CHOOSE_BLACK"})
-        else:
-            return jsonify({"choice": "CHOOSE_WHITE"})
-
+    # P1's final choice logic remains a simple evaluation.
+    if game_phase == GamePhase.SWAP2_P1_CHOOSE_COLOR:
+        choice = random.choice(["CHOOSE_BLACK", "CHOOSE_WHITE"])
+        return jsonify({"choice": choice})
     # --- Handle All Move Placements ---
     if game_phase == GamePhase.SWAP2_P1_PLACE_3:
-        num_stones_on_board = sum(row.count(1) + row.count(2) for row in board)
-        if num_stones_on_board < 3:
-            opening_pattern = OPENING_BOOK[0]
-            move = opening_pattern[num_stones_on_board]
-            return jsonify({"move": move})
-
+        pass
     elif game_phase == GamePhase.SWAP2_P2_PLACE_2:
-        pass  # Fall through to standard move logic
+        pass
 
     # --- Standard Baseline Logic ---
     opponent_color = 3 - color_to_play

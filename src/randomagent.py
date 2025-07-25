@@ -73,10 +73,10 @@ def get_move():
     game_phase = data.get("game_phase")
 
     # --- Handle Swap2 Choices ---
-    if game_phase == "P2_CHOOSE":
+    if game_phase == GamePhase.SWAP2_P2_CHOOSE_ACTION:
         choices = ["TAKE_BLACK", "TAKE_WHITE", "PLACE_2"]
         return jsonify({"choice": random.choice(choices)})
-    if game_phase == "P1_CHOOSE":
+    if game_phase == GamePhase.SWAP2_P1_CHOOSE_COLOR:
         choices = ["CHOOSE_BLACK", "CHOOSE_WHITE"]
         return jsonify({"choice": random.choice(choices)})
 

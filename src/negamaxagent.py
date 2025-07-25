@@ -43,10 +43,10 @@ to force the AI to block critical threats instead of making risky offensive move
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 100_000_000},
     "LIVE_FOUR": {"mine": 10_000_000, "opp": 50_000_000},
-    "RUSH_FOUR": {"mine": 1_000_000, "opp": 2_000_000},
+    "RUSH_FOUR": {"mine": 1_000_000, "opp": 1_000_000},
     "DOUBLE_THREE": {"mine": 1_000_000, "opp": 50_000_000},
-    "LIVE_THREE": {"mine": 500_000, "opp": 1_500_000},
-    "SLEEPY_THREE": {"mine": 5_000, "opp": 10_000},
+    "LIVE_THREE": {"mine": 100_000, "opp": 1_000_000},
+    "SLEEPY_THREE": {"mine": 10_000, "opp": 10_000},
     "LIVE_TWO": {"mine": 1_000, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 200},
     "SINGLE": {"mine": 10, "opp": 20},
@@ -103,6 +103,7 @@ class NegamaxAgent:
         self.total_nodes_at_root = 0
 
         self.swap2_opening_sequence = []
+        self.joseki_book = None
         self._load_joseki()
 
     def _load_joseki(self, joseki_file="josekis.json"):
@@ -118,8 +119,10 @@ class NegamaxAgent:
                 logger.warning(
                     f"Joseki file '{joseki_file}' not found. Continuing without opening book."
                 )
+                self.joseki_book = None
         except Exception as e:
             logger.error(f"Error loading joseki file: {e}")
+            self.joseki_book = None
 
     def _compute_hash(self, player):
         h = np.uint64(0)
@@ -441,7 +444,9 @@ class NegamaxAgent:
         if depth == 0:
             return self.quiescence_search(alpha, beta, player, 2), None
 
-        if depth >= 3 and np.any(self.board):
+        # Null-move pruning. Avoid the root of the search iteration
+        is_not_root_node = depth < self.current_search_depth
+        if depth >= 3 and np.any(self.board) and is_not_root_node:
             score, _ = self.negamax(
                 depth - 3, -beta, -beta + 1, 3 - player, banned_moves_enabled
             )
@@ -723,6 +728,7 @@ def get_move():
 
             if len(black_stones) == 2 and len(white_stones) == 1 and agent.joseki_book:
                 center_stone_idx_arr = np.where((black_stones == [7, 7]).all(axis=1))[0]
+
                 if center_stone_idx_arr.size > 0:
                     center_stone_idx = center_stone_idx_arr[0]
                     p1_first_move = black_stones[center_stone_idx].tolist()
@@ -735,7 +741,6 @@ def get_move():
                             and joseki["joseki"][1][:2] == p2_second_move
                             and joseki["joseki"][2][:2] == p1_third_move
                         ):
-
                             trend = joseki["trend"]
                             choice = "TAKE_BLACK" if trend == 1 else "TAKE_WHITE"
                             logger.info(
@@ -751,7 +756,7 @@ def get_move():
             elif score < -SCORE_TABLE["LIVE_THREE"]["opp"]:
                 choice = "TAKE_WHITE"
             else:
-                choice = "PLACE_TWO_MORE"
+                choice = "PLACE_2"
             logger.info(f"P2_CHOOSE_ACTION evaluation score: {score}, Choice: {choice}")
             return jsonify({"choice": choice})
         # Swap2: P1 chooses color after P2 places 2 more stones.
@@ -799,7 +804,7 @@ def get_move():
             logger.error(
                 "Request received without a 'color_to_play' in a move-required phase."
             )
-            moves = agent.get_possible_moves(1, False, 0, None)
+            moves = agent.get_possible_moves(BLACK, False, 0, None)
             if moves:
                 return jsonify({"move": [int(moves[0][0]), int(moves[0][1])]})
             else:
