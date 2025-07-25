@@ -593,7 +593,7 @@ class NegamaxAgent:
 
                 if move is not None:
                     best_move_so_far = move
-                    final_search_depth = depth
+                final_search_depth = depth
 
                 elapsed_time = time.time() - self.start_time
                 logger.info(
