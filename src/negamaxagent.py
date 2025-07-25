@@ -29,10 +29,10 @@ GRID_SIZE = 15
 EMPTY = 0
 BLACK = 1
 WHITE = 2
-# EXPERT COMMENT: Adjusted TIME_LIMIT to be slightly less than typical HTTP timeouts.
 TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
 MAX_DEPTH = 50  # Max search depth for IDDFS
 MIN_DEPTH = 3  # The minimum depth the AI must complete, regardless of time.
+TOP_K_BY_DEPTH = [32, 24, 18, 12, 8, 4, 2, 1]
 
 
 """
@@ -262,9 +262,7 @@ class NegamaxAgent:
 
     def _rate_move_statically(self, r, c, player):
         """
-        NEW: A lightweight function to statically evaluate the threat
-        of a single move for sorting purposes. It is much faster than
-        a full board evaluation.
+        Statically evaluate the threat of a single move for sorting purposes.
         """
         score = 0
         opponent = 3 - player
@@ -354,6 +352,21 @@ class NegamaxAgent:
         for move in sorted_moves:
             if move not in final_ordered_list:
                 final_ordered_list.append(move)
+        # 5. Top-K Move Pruning to reduce the branching factor.
+        if depth > 0:
+            absolute_depth = self.current_search_depth - depth
+            if absolute_depth < 0:
+                absolute_depth = 0  # Safeguard
+
+            if absolute_depth < len(TOP_K_BY_DEPTH):
+                top_k = TOP_K_BY_DEPTH[absolute_depth]
+            else:
+                top_k = TOP_K_BY_DEPTH[
+                    -1
+                ]  # Use the last value as a default for deeper nodes.
+
+            if len(final_ordered_list) > top_k:
+                return final_ordered_list[:top_k]
 
         return final_ordered_list
 
