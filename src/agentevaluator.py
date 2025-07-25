@@ -133,7 +133,6 @@ class AgentEvaluator:
         return self.get_report_data()
 
     def get_report_data(self):
-        """Returns a dictionary with the analysis results for this game."""
         if not self.stats:
             return None
 
@@ -143,7 +142,7 @@ class AgentEvaluator:
         result = "Draw"
         if winner_name == AGENT_TO_EVALUATE:
             result = "Win"
-        elif winner_name != "None" and winner_name != "N/A" and winner_name != "Draw":
+        elif winner_name not in ["None", "N/A", "Draw"]:
             result = "Loss"
 
         avg_time = (
@@ -166,7 +165,7 @@ class AgentEvaluator:
             ),
             "Winner": winner_name,
             "Result": result,
-            "Agent Total Moves": agent_stats["total_moves"],
+            "Agent Total Moves": len(self.history["move_history"]),
             "Agent Avg. Time (s)": round(avg_time, 4),
             "Agent Avg. Depth": round(avg_depth, 2),
             "Agent Max Depth": int(max_depth),
@@ -174,6 +173,8 @@ class AgentEvaluator:
             "Blocked Live Fours": agent_stats["defense"]["Blocked Live Fours"],
             "Blocked Live Threes": agent_stats["defense"]["Blocked Live Threes"],
             "Live Threes Created": agent_stats["offense"]["Live Threes Created"],
+            # NEW: Internal field to carry the agent's actual move count for summary calculations.
+            "__internal_agent_moves": agent_stats["timed_moves"],
         }
 
 
