@@ -250,7 +250,7 @@ class BatchEvaluator:
             "Opponent": "All",
             "Winner": f"{wins} Wins, {losses} Losses, {draws} Draws",
             "Result": f"{win_rate:.2f}% Win Rate",
-            "Agent Total Moves": details_df["Agent Total Moves"].sum(),
+            "Agent Total Moves": round(details_df["Agent Total Moves"].mean(), 2),
             "Agent Avg. Time (s)": round(overall_avg_time, 4),
             "Agent Avg. Depth": round(overall_avg_depth, 2),
             "Agent Max Depth": "N/A",
