@@ -190,7 +190,7 @@ class GomokuCanvas(QWidget):
 
         if self.swap2_enabled:
             self.game_phase = GamePhase.SWAP2_P1_PLACE_3
-            self.swap2_stones_to_place = [1, 1, 2]
+            self.swap2_stones_to_place = [1, 2, 1]  # black, white, black
         else:
             self.game_phase = GamePhase.NORMAL
 
@@ -658,6 +658,9 @@ class GomokuBoard(QWidget):
             dialog.setWindowTitle("Player 2's Choice")
             dialog.setText("Player 2, choose your action:")
             dialog.setIcon(QMessageBox.Question)
+            dialog.setInformativeText(
+                "Note: Closing this window will default to 'Place 2 More Stones'."
+            )
             black_btn = dialog.addButton("Take Black", QMessageBox.AcceptRole)
             white_btn = dialog.addButton("Take White", QMessageBox.AcceptRole)
             swap_btn = dialog.addButton("Place 2 More Stones", QMessageBox.RejectRole)
@@ -675,6 +678,9 @@ class GomokuBoard(QWidget):
             dialog.setWindowTitle("Player 1's Final Choice")
             dialog.setText("Player 1, choose your color for the rest of the game:")
             dialog.setIcon(QMessageBox.Question)
+            dialog.setInformativeText(
+                "Note: Closing this window will default to 'Choose White'."
+            )
             black_btn = dialog.addButton("Choose Black", QMessageBox.AcceptRole)
             white_btn = dialog.addButton("Choose White", QMessageBox.AcceptRole)
             dialog.exec_()
@@ -1077,7 +1083,9 @@ class GomokuApp(QMainWindow):
                 )
                 msg_box.setText(f"<h2>{winner_name} Wins!</h2>")
 
-            msg_box.setInformativeText("What would you like to do next?")
+            msg_box.setInformativeText(
+                "What would you like to do next?\nNote: Closing this window will default to 'Review Board'."
+            )
             msg_box.setIcon(QMessageBox.Icon.Question)
             play_again_btn = msg_box.addButton(
                 "Play Again", QMessageBox.ButtonRole.AcceptRole
