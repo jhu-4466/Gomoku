@@ -32,7 +32,7 @@ WHITE = 2
 TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
 MAX_DEPTH = 50  # Max search depth for IDDFS
 MIN_DEPTH = 3  # The minimum depth the AI must complete, regardless of time.
-TOP_K_BY_DEPTH = [32, 24, 18, 12, 8, 4, 2, 1]
+TOP_K_BY_DEPTH = [32, 16, 8, 4]
 
 
 """
