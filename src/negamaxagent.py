@@ -40,16 +40,27 @@ TOP_K_BY_DEPTH = [32, 24, 16, 8]
 The values for opponent's threats ('opp') are now significantly higher than 'mine'
 to force the AI to block critical threats instead of making risky offensive moves.
 """
+# SCORE_TABLE = {
+#     "FIVE": {"mine": 100_000_000, "opp": 100_000_000},
+#     "LIVE_FOUR": {"mine": 10_000_000, "opp": 50_000_000},
+#     "RUSH_FOUR": {"mine": 1_000_000, "opp": 1_000_000},
+#     "DOUBLE_THREE": {"mine": 1_000_000, "opp": 50_000_000},
+#     "LIVE_THREE": {"mine": 100_000, "opp": 1_000_000},
+#     "SLEEPY_THREE": {"mine": 10_000, "opp": 10_000},
+#     "LIVE_TWO": {"mine": 1_000, "opp": 2_000},
+#     "SLEEPY_TWO": {"mine": 100, "opp": 200},
+#     "SINGLE": {"mine": 10, "opp": 20},
+# }
 SCORE_TABLE = {
-    "FIVE": {"mine": 100_000_000, "opp": 100_000_000},
+    "FIVE": {"mine": 100_000_000, "opp": 500_000_000},
     "LIVE_FOUR": {"mine": 10_000_000, "opp": 50_000_000},
-    "RUSH_FOUR": {"mine": 1_000_000, "opp": 1_000_000},
-    "DOUBLE_THREE": {"mine": 1_000_000, "opp": 50_000_000},
-    "LIVE_THREE": {"mine": 100_000, "opp": 1_000_000},
-    "SLEEPY_THREE": {"mine": 10_000, "opp": 10_000},
-    "LIVE_TWO": {"mine": 1_000, "opp": 2_000},
-    "SLEEPY_TWO": {"mine": 100, "opp": 200},
-    "SINGLE": {"mine": 10, "opp": 20},
+    "RUSH_FOUR": {"mine": 800_000, "opp": 1_000_000},
+    "DOUBLE_THREE": {"mine": 10_000_000, "opp": 50_000_000},
+    "LIVE_THREE": {"mine": 1_000_000, "opp": 5_000_000},
+    "SLEEPY_THREE": {"mine": 500, "opp": 1_000},
+    "LIVE_TWO": {"mine": 100, "opp": 500},
+    "SLEEPY_TWO": {"mine": 10, "opp": 20},
+    "SINGLE": {"mine": 1, "opp": 2},
 }
 PATTERNS_PLAYER = {
     "FIVE": re.compile(r"11111"),
@@ -301,21 +312,68 @@ class NegamaxAgent:
         score = 0
         opponent = 3 - player
 
-        # Showing the priority of stones patterns that the coefficient values are useless actually.
-        # Offensive score
+        # --- Offensive Check ---
         self.board[r, c] = player
-        my_patterns = self._find_patterns_fast(player)
-        score += my_patterns.get("LIVE_FOUR", 0) * SCORE_TABLE["LIVE_FOUR"]["mine"]
-        score += my_patterns.get("RUSH_FOUR", 0) * SCORE_TABLE["RUSH_FOUR"]["mine"]
-        score += my_patterns.get("LIVE_THREE", 0) * SCORE_TABLE["LIVE_THREE"]["mine"]
+        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+            line_chars = []
+            for i in range(-4, 5):
+                nr, nc = r + i * dr, c + i * dc
+                if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
+                    val = self.board[nr, nc]
+                    if val == player:
+                        line_chars.append("1")
+                    elif val == opponent:
+                        line_chars.append("2")
+                    else:
+                        line_chars.append("0")
+                else:
+                    line_chars.append("3")
+            line = "".join(line_chars)
+
+            if "011110" in line:
+                score += SCORE_TABLE["LIVE_FOUR"]["mine"]
+            if (
+                "211110" in line
+                or "011112" in line
+                or "10111" in line
+                or "11011" in line
+                or "11101" in line
+            ):
+                score += SCORE_TABLE["RUSH_FOUR"]["mine"]
+            if "01110" in line or "010110" in line:
+                score += SCORE_TABLE["LIVE_THREE"]["mine"]
         self.board[r, c] = EMPTY
 
-        # Defensive score
+        # --- Defensive Check ---
         self.board[r, c] = opponent
-        op_patterns = self._find_patterns_fast(opponent)
-        score += op_patterns.get("LIVE_FOUR", 0) * SCORE_TABLE["LIVE_FOUR"]["opp"]
-        score += op_patterns.get("RUSH_FOUR", 0) * SCORE_TABLE["RUSH_FOUR"]["opp"]
-        score += op_patterns.get("LIVE_THREE", 0) * SCORE_TABLE["LIVE_THREE"]["opp"]
+        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+            line_chars = []
+            for i in range(-4, 5):
+                nr, nc = r + i * dr, c + i * dc
+                if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
+                    val = self.board[nr, nc]
+                    if val == opponent:
+                        line_chars.append("1")
+                    elif val == player:
+                        line_chars.append("2")
+                    else:
+                        line_chars.append("0")
+                else:
+                    line_chars.append("3")
+            line = "".join(line_chars)
+
+            if "011110" in line:
+                score += SCORE_TABLE["LIVE_FOUR"]["opp"]
+            if (
+                "211110" in line
+                or "011112" in line
+                or "10111" in line
+                or "11011" in line
+                or "11101" in line
+            ):
+                score += SCORE_TABLE["RUSH_FOUR"]["opp"]
+            if "01110" in line or "010110" in line:
+                score += SCORE_TABLE["LIVE_THREE"]["opp"]
         self.board[r, c] = EMPTY
 
         return score
