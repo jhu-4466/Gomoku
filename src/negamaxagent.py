@@ -33,7 +33,7 @@ WHITE = 2
 TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
 MAX_DEPTH = 50  # Max search depth for IDDFS
 MIN_DEPTH = 3  # The minimum depth the AI must complete, regardless of time.
-TOP_K_BY_DEPTH = [32, 16, 8, 4]
+TOP_K_BY_DEPTH = [32, 24, 16, 8]
 
 
 """
@@ -262,6 +262,9 @@ class NegamaxAgent:
 
     def _find_patterns_fast(self, player):
         patterns = defaultdict(int)
+
+        # transform the board to a player-centric view:
+        # 1- player, 2- opponent
         player_board = np.copy(self.board)
         if player == WHITE:
             player_board[self.board == WHITE] = 1
@@ -793,7 +796,6 @@ def get_move():
                     logger.error("No possible moves available.")
                     return jsonify({"move": None, "search_depth": 0})
         else:
-            # This case should ideally not be hit if the phase logic is correct
             logger.error(
                 "Request received without a 'color_to_play' in a move-required phase."
             )
