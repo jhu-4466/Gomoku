@@ -9,6 +9,7 @@ import numpy as np
 from flask import Flask, request, jsonify
 import os
 from datetime import datetime
+import random
 
 
 # --- Logging Setup ---
@@ -67,6 +68,15 @@ zobrist_table = np.random.randint(
 zobrist_player_turn = np.random.randint(1, 2**63 - 1, dtype=np.uint64)
 
 
+# Game phases for swap2
+class GamePhase:
+    NORMAL = 0
+    SWAP2_P1_PLACE_3 = 1
+    SWAP2_P2_CHOOSE_ACTION = 2
+    SWAP2_P2_PLACE_2 = 3
+    SWAP2_P1_CHOOSE_COLOR = 4
+
+
 # Flask app setup
 app = Flask(__name__)
 
@@ -91,6 +101,25 @@ class NegamaxAgent:
         self.current_search_depth = 0
         self.nodes_evaluated_at_root = 0
         self.total_nodes_at_root = 0
+
+        self.swap2_opening_sequence = []
+        self._load_joseki()
+
+    def _load_joseki(self, joseki_file="josekis.json"):
+        """Loads the joseki book from a JSON file."""
+        try:
+            if os.path.exists(joseki_file):
+                with open(joseki_file, "r", encoding="utf-8") as f:
+                    self.joseki_book = json.load(f)
+                logger.info(
+                    f"Successfully loaded {len(self.joseki_book)} joseki patterns."
+                )
+            else:
+                logger.warning(
+                    f"Joseki file '{joseki_file}' not found. Continuing without opening book."
+                )
+        except Exception as e:
+            logger.error(f"Error loading joseki file: {e}")
 
     def _compute_hash(self, player):
         h = np.uint64(0)
@@ -651,7 +680,7 @@ def get_move():
         board = data["board"]
         color_to_play = data.get("color_to_play")
         banned_moves_enabled = data.get("banned_moves_enabled", False)
-        game_phase = data.get("game_phase", "NORMAL")
+        game_phase = data.get("game_phase", GamePhase.NORMAL)
         is_new_game = data.get("new_game", False)
         if is_new_game:
             agent.reset_for_new_game()
@@ -662,34 +691,85 @@ def get_move():
 
         agent.board = np.array(board)
 
-        if game_phase == "P2_CHOOSE":
+        # --- Joseki (Opening Book) and Special Phase Logic ---
+        # Swap2: P1 places 3 stones.
+        if game_phase == GamePhase.SWAP2_P1_PLACE_3:
+            if not agent.swap2_opening_sequence:
+                if agent.joseki_book:
+                    chosen_joseki = random.choice(agent.joseki_book)
+                    agent.swap2_opening_sequence = list(chosen_joseki["joseki"][:3])
+                    logger.info(
+                        f"Swap2 Opening: Starting sequence for '{chosen_joseki['name_cn']}'."
+                    )
+                else:
+                    logger.warning(
+                        "Joseki book not loaded. Using default fallback opening."
+                    )
+                    agent.swap2_opening_sequence = [[7, 7, 1], [6, 7, 2], [6, 8, 1]]
+            if agent.swap2_opening_sequence:
+                next_move_data = agent.swap2_opening_sequence.pop(0)
+                move = [next_move_data[0], next_move_data[1]]
+                logger.info(
+                    f"Returning move {3 - len(agent.swap2_opening_sequence)}/3 of opening sequence: {move}"
+                )
+                return jsonify({"move": move, "search_depth": 0})
+        # Swap2: P2 chooses an action after P1 places 3 stones.
+        elif game_phase == GamePhase.SWAP2_P2_CHOOSE_ACTION:
+            black_stones = np.argwhere(agent.board == BLACK)
+            white_stones = np.argwhere(agent.board == WHITE)
+
+            if len(black_stones) == 2 and len(white_stones) == 1 and agent.joseki_book:
+                center_stone_idx_arr = np.where((black_stones == [7, 7]).all(axis=1))[0]
+                if center_stone_idx_arr.size > 0:
+                    center_stone_idx = center_stone_idx_arr[0]
+                    p1_first_move = black_stones[center_stone_idx].tolist()
+                    p1_third_move = black_stones[1 - center_stone_idx].tolist()
+                    p2_second_move = white_stones[0].tolist()
+
+                    for joseki in agent.joseki_book:
+                        if (
+                            joseki["joseki"][0][:2] == p1_first_move
+                            and joseki["joseki"][1][:2] == p2_second_move
+                            and joseki["joseki"][2][:2] == p1_third_move
+                        ):
+
+                            trend = joseki["trend"]
+                            choice = "TAKE_BLACK" if trend == 1 else "TAKE_WHITE"
+                            logger.info(
+                                f"Joseki recognized: '{joseki['name_cn']}'. Trend is {trend}. Choosing to {choice}."
+                            )
+                            return jsonify({"choice": choice})
+
+            logger.info("No joseki matched. Evaluating board to choose action.")
             score = agent.evaluate_board(BLACK)
-            choice = "PLACE_2"
+            # Thresholds for decision making can be tuned
             if score > SCORE_TABLE["LIVE_THREE"]["mine"]:
                 choice = "TAKE_BLACK"
             elif score < -SCORE_TABLE["LIVE_THREE"]["opp"]:
                 choice = "TAKE_WHITE"
-            logger.info(f"P2_CHOOSE evaluation score: {score}, Choice: {choice}")
+            else:
+                choice = "PLACE_TWO_MORE"
+            logger.info(f"P2_CHOOSE_ACTION evaluation score: {score}, Choice: {choice}")
             return jsonify({"choice": choice})
-
-        if game_phase == "P1_CHOOSE":
+        # Swap2: P1 chooses color after P2 places 2 more stones.
+        elif game_phase == GamePhase.SWAP2_P1_CHOOSE_COLOR:
             black_score = agent.evaluate_board(BLACK)
             white_score = agent.evaluate_board(WHITE)
             choice = "CHOOSE_WHITE"
             if black_score >= white_score:
                 choice = "CHOOSE_BLACK"
             logger.info(
-                f"P1_CHOOSE scores (B/W): {black_score}/{white_score}, Choice: {choice}"
+                f"P1_CHOOSE_COLOR scores (B/W): {black_score}/{white_score}, Choice: {choice}"
             )
             return jsonify({"choice": choice})
 
+        # --- Normal Search Logic and SWAP2_P2_PLACE_2 ---
         if color_to_play:
             best_move, search_depth = agent.find_best_move(
                 board, color_to_play, banned_moves_enabled
             )
             if best_move:
                 logger.info(f"Move found: {best_move} at depth {search_depth}")
-                # --- MODIFIED: Add search_depth to the JSON response ---
                 return jsonify(
                     {
                         "move": [int(best_move[0]), int(best_move[1])],
@@ -713,14 +793,16 @@ def get_move():
                     logger.error("No possible moves available.")
                     return jsonify({"move": None, "search_depth": 0})
         else:
-            logger.warning(
-                "Request received without a 'color_to_play'. Falling back to default."
+            # This case should ideally not be hit if the phase logic is correct
+            logger.error(
+                "Request received without a 'color_to_play' in a move-required phase."
             )
             moves = agent.get_possible_moves(1, False, 0, None)
             if moves:
                 return jsonify({"move": [int(moves[0][0]), int(moves[0][1])]})
             else:
                 return jsonify({"move": None})
+
     except Exception:
         logger.exception("An unhandled error occurred in the get_move endpoint.")
         return jsonify({"error": "An internal server error occurred."}), 500
