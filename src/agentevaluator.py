@@ -101,7 +101,7 @@ class AgentEvaluator:
             "total_moves": 0,
             "total_thinking_time": 0.0,
             "timed_moves": 0,
-            "search_depths": [],  # --- NEW: List to store search depths ---
+            "search_depths": [],
         }
 
         board = np.zeros((GRID_SIZE, GRID_SIZE), dtype=int)
@@ -116,8 +116,6 @@ class AgentEvaluator:
                         "thinking_time"
                     ]
                     self.stats[agent_name]["timed_moves"] += 1
-
-                # --- NEW: Record search depth if available ---
                 if "search_depth" in move_info:
                     self.stats[agent_name]["search_depths"].append(
                         move_info["search_depth"]
@@ -145,6 +143,15 @@ class AgentEvaluator:
         elif winner_name not in ["None", "N/A", "Draw"]:
             result = "Loss"
 
+        p1_name = self.history["player_setup"]["p1_name"]
+        agent_player_id_str = "1" if p1_name == AGENT_TO_EVALUATE else "2"
+        color_code = self.history["final_colors"].get(agent_player_id_str)
+        agent_color = (
+            "Black"
+            if color_code == BLACK
+            else "White" if color_code == WHITE else "N/A"
+        )
+
         avg_time = (
             (agent_stats["total_thinking_time"] / agent_stats["timed_moves"])
             if agent_stats["timed_moves"] > 0
@@ -158,6 +165,7 @@ class AgentEvaluator:
         return {
             "Game ID": self.history["game_id"],
             "Agent": AGENT_TO_EVALUATE,
+            "Agent Color": agent_color,
             "Opponent": (
                 self.history["player_setup"]["p1_name"]
                 if self.history["player_setup"]["p2_name"] == AGENT_TO_EVALUATE
@@ -173,7 +181,6 @@ class AgentEvaluator:
             "Blocked Live Fours": agent_stats["defense"]["Blocked Live Fours"],
             "Blocked Live Threes": agent_stats["defense"]["Blocked Live Threes"],
             "Live Threes Created": agent_stats["offense"]["Live Threes Created"],
-            # NEW: Internal field to carry the agent's actual move count for summary calculations.
             "__internal_agent_moves": agent_stats["timed_moves"],
         }
 
@@ -222,35 +229,60 @@ class BatchEvaluator:
 
         details_df = pd.DataFrame(self.all_game_reports)
 
-        # Create Summary Row
+        # --- Create Summary Row ---
         total_games = len(details_df)
         wins = (details_df["Result"] == "Win").sum()
         losses = (details_df["Result"] == "Loss").sum()
         draws = (details_df["Result"] == "Draw").sum()
         win_rate = (wins / total_games * 100) if total_games > 0 else 0
 
-        total_moves = details_df["Agent Total Moves"].sum()
+        # Win rate
+        # Black
+        games_as_black = details_df[details_df["Agent Color"] == "Black"]
+        wins_as_black = (games_as_black["Result"] == "Win").sum()
+        total_black_games = len(games_as_black)
+        black_win_rate = (
+            (wins_as_black / total_black_games * 100) if total_black_games > 0 else 0
+        )
+        # White
+        games_as_white = details_df[details_df["Agent Color"] == "White"]
+        wins_as_white = (games_as_white["Result"] == "Win").sum()
+        total_white_games = len(games_as_white)
+        white_win_rate = (
+            (wins_as_white / total_white_games * 100) if total_white_games > 0 else 0
+        )
+
+        # --- Calculate other summary stats ---
+        total_agent_moves = details_df["__internal_agent_moves"].sum()
         total_time = (
-            details_df["Agent Avg. Time (s)"] * details_df["Agent Total Moves"]
+            details_df["Agent Avg. Time (s)"] * details_df["__internal_agent_moves"]
         ).sum()
-        overall_avg_time = (total_time / total_moves) if total_moves > 0 else 0
+        overall_avg_time = (
+            (total_time / total_agent_moves) if total_agent_moves > 0 else 0
+        )
 
         total_weighted_depth = (
-            details_df["Agent Avg. Depth"] * details_df["Agent Total Moves"]
+            details_df["Agent Avg. Depth"] * details_df["__internal_agent_moves"]
         ).sum()
         overall_avg_depth = (
-            (total_weighted_depth / total_moves) if total_moves > 0 else 0
+            (total_weighted_depth / total_agent_moves) if total_agent_moves > 0 else 0
         )
-        overall_max_depth = (
-            details_df["Agent Max Depth"].max() if not details_df.empty else 0
+
+        # MODIFIED: Create new summary text strings
+        summary_winner_text = f"{wins} W, {losses} L, {draws} D"
+        summary_result_text = (
+            f"Overall: {win_rate:.2f}% | "
+            f"Black: {black_win_rate:.2f}% ({total_black_games} games) | "
+            f"White: {white_win_rate:.2f}% ({total_white_games} games)"
         )
 
         summary_row = {
             "Game ID": "SUMMARY",
             "Agent": AGENT_TO_EVALUATE,
+            "Agent Color": "N/A",
             "Opponent": "All",
-            "Winner": f"{wins} Wins, {losses} Losses, {draws} Draws",
-            "Result": f"{win_rate:.2f}% Win Rate",
+            "Winner": summary_winner_text,
+            "Result": summary_result_text,
             "Agent Total Moves": round(details_df["Agent Total Moves"].mean(), 2),
             "Agent Avg. Time (s)": round(overall_avg_time, 4),
             "Agent Avg. Depth": round(overall_avg_depth, 2),
@@ -261,11 +293,13 @@ class BatchEvaluator:
             "Live Threes Created": round(details_df["Live Threes Created"].mean(), 2),
         }
 
-        # Append summary row
         summary_df = pd.DataFrame([summary_row])
         final_df = pd.concat([details_df, summary_df], ignore_index=True)
 
-        # Create output directory and save file
+        # Drop the internal column before saving
+        if "__internal_agent_moves" in final_df.columns:
+            final_df = final_df.drop(columns=["__internal_agent_moves"])
+
         output_dir = "evaluation"
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -276,7 +310,6 @@ class BatchEvaluator:
         with pd.ExcelWriter(output_filename, engine="openpyxl") as writer:
             final_df.to_excel(writer, sheet_name="Evaluation_Report", index=False)
 
-            # Auto-adjust column widths for better readability
             worksheet = writer.sheets["Evaluation_Report"]
             for column in worksheet.columns:
                 max_length = 0
@@ -287,7 +320,7 @@ class BatchEvaluator:
                             max_length = len(cell.value)
                     except:
                         pass
-                adjusted_width = max_length + 2
+                adjusted_width = max(max_length + 2, len(str(cell.column_letter)))
                 worksheet.column_dimensions[column_letter].width = adjusted_width
 
         print(f"\nEvaluation report successfully generated: {output_filename}")
