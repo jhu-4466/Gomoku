@@ -942,6 +942,11 @@ class GomokuApp(QMainWindow):
                 "url": "http://127.0.0.1:5003/get_move",
                 "timeout": 30,
             },
+            {
+                "name": "Gomocup AI",
+                "url": "http://127.0.0.1:5004/get_move",
+                "timeout": 30,
+            },
         ]
         self.agent_handler = None
         self.player_configs = {1: None, 2: None}
