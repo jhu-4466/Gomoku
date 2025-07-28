@@ -45,10 +45,7 @@ class RAPFIWrapper:
         self.process.stdin.write(cmd + "\n")
         self.process.stdin.flush()
 
-    # --- MODIFIED FUNCTION ---
-    def _get_response(
-        self, timeout=29.8
-    ):  # Increased timeout to be safely above engine's timeout
+    def _get_response(self, timeout=31):
         """
         Gets the next valid move coordinate from the engine, ignoring all other
         informational (DEBUG, MESSAGE, ERROR) or acknowledgment (OK) messages.
@@ -59,9 +56,6 @@ class RAPFIWrapper:
                 response = self._stdout_queue.get(timeout=1)
                 print(f"RSP < {response}")
 
-                # --- NEW LOGIC ---
-                # Specifically look for a response in the "x,y" format.
-                # This is the single most important change.
                 if "," in response:
                     parts = response.split(",")
                     if (
@@ -70,21 +64,16 @@ class RAPFIWrapper:
                         and parts[1].strip().isdigit()
                     ):
                         print(f"VALID MOVE PARSED: {response}")
-                        return response  # Return the valid move string
-
-                # If it's not a move, it's logged and ignored. The loop continues.
+                        return response
 
             except queue.Empty:
-                # This is not an error, just the queue being temporarily empty.
-                # The outer while loop will handle the overall timeout.
                 continue
 
-        # If the while loop finishes, a true timeout has occurred.
         raise queue.Empty(
             f"Engine did not respond with a valid move coordinate within the {timeout}s period."
         )
 
-    def _wait_for_ok(self, timeout=29.8):
+    def _wait_for_ok(self, timeout=30):
         """Waits specifically for an OK response, ignoring everything else."""
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -105,7 +94,13 @@ class RAPFIWrapper:
     def set_timeout(self, ms):
         """Sends the INFO timeout_turn command to set the time limit per turn."""
         self._send_command(f"INFO timeout_turn {ms}")
-        # We don't necessarily need to wait for an OK here, as it's an informational command
+
+    def set_rule(self, rule_value):
+        """
+        Sends the INFO rule command to set the game rules (e.g., 1 for Renju).
+        """
+        self._send_command(f"INFO rule {rule_value}")
+        # According to the protocol, we don't need to wait for an OK for INFO commands.
 
     def begin(self):
         """Sends the BEGIN command to get the AI's first move."""
@@ -133,17 +128,18 @@ def get_move():
     data = request.get_json()
     move_history = data.get("move_history", [])
     is_new_game = data.get("new_game", False)
+    banned_moves_enabled = data.get("banned_moves_enabled", False)
 
     start_time = time.time()
     try:
         move_str = ""
         # STEP 1: Always initialize the engine and set timeout on a new game signal.
         if is_new_game:
-            print("--- New Game Signal. Sending START and setting timeout. ---")
+            print("--- New Game Signal. Sending START, setting rules, and timeout. ---")
             gomoku_engine_wrapper.start_game()
-            gomoku_engine_wrapper.set_timeout(
-                29500
-            )  # Set engine timeout to 29.5 seconds
+            gomoku_engine_wrapper.set_timeout(29500)
+            if banned_moves_enabled:
+                gomoku_engine_wrapper.set_rule(1)
 
         # STEP 2: Prompt for the actual move.
         if not move_history:
@@ -160,13 +156,11 @@ def get_move():
         print(f"AI thinking time: {thinking_time:.2f}s")
 
         # STEP 3: Parse the response.
-        # The parsing logic is now simpler because _get_response guarantees a valid format or throws a timeout.
         if move_str:
             parts = move_str.split(",")
             move = [int(parts[0].strip()), int(parts[1].strip())]
             return jsonify({"move": move, "search_depth": -1})
 
-        # This part should ideally not be reached unless _get_response returns an empty string, which it won't.
         error_msg = f"Engine returned unexpected empty output: '{move_str}'"
         print(error_msg)
         return jsonify({"error": error_msg}), 500
@@ -174,9 +168,6 @@ def get_move():
     except queue.Empty as e:
         error_msg = f"FATAL: Engine timed out. {e}"
         print(error_msg)
-        # In case of a timeout, the engine state is now unknown.
-        # It's safest to force a restart on the next call.
-        # A more advanced implementation could kill and restart the subprocess here.
         return jsonify({"error": error_msg, "recommend_restart": True}), 500
     except Exception as e:
         error_msg = f"An unexpected error occurred: {str(e)}"
