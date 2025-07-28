@@ -59,7 +59,7 @@ class RAPFIWrapper:
             "Engine did not respond with a move within the timeout period."
         )
 
-    def _wait_for_ok(self, timeout=10):
+    def _wait_for_ok(self, timeout=30):
         """Waits specifically for an OK response, ignoring everything else."""
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -76,6 +76,11 @@ class RAPFIWrapper:
         """Sends the START command and waits for the OK acknowledgement."""
         self._send_command(f"START {self.board_size}")
         self._wait_for_ok()
+
+    def set_timeout(self, ms):
+        """Sends the INFO timeout_turn command to set the time limit per turn."""
+        self._send_command(f"INFO timeout_turn {ms}")
+        # We don't necessarily need to wait for an OK here, as it's an informational command
 
     def begin(self):
         """Sends the BEGIN command to get the AI's first move."""
@@ -107,10 +112,11 @@ def get_move():
     start_time = time.time()
     try:
         move_str = ""
-        # STEP 1: Always initialize the engine on a new game signal.
+        # STEP 1: Always initialize the engine and set timeout on a new game signal.
         if is_new_game:
-            print("--- New Game Signal. Sending START and waiting for OK. ---")
+            print("--- New Game Signal. Sending START and setting timeout. ---")
             gomoku_engine_wrapper.start_game()
+            gomoku_engine_wrapper.set_timeout(29500)  # Set timeout to 29.5 seconds
 
         # STEP 2: Prompt for the actual move.
         if not move_history:
