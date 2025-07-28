@@ -774,6 +774,7 @@ class GomokuAgentHandler(QThread):
             "player_id": state["current_player_id"],
             "color_to_play": state["player_colors"][state["current_player_id"]],
             "banned_moves_enabled": self.game_engine.canvas.banned_moves_enabled,
+            "swap2_enabled": self.game_engine.canvas.swap2_enabled,
             "game_phase": state["game_phase"],
             "move_history": self.game_engine.canvas.move_history,
         }
