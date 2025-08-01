@@ -16,6 +16,10 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QSpinBox,
     QFormLayout,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QSlider,
 )
 from PyQt5.QtGui import QImage, QPainter, QFont, QColor
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QThread
@@ -924,6 +928,307 @@ class NewGameDialog(QDialog):
         }
 
 
+class ReplayCanvas(QWidget):
+    """A display-only canvas for showing a board state during replay."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(PYGAME_CANVAS_WIDTH, PYGAME_CANVAS_HEIGHT - INFO_BAR_HEIGHT)
+        self.board = [[0] * GRID_SIZE for _ in range(GRID_SIZE)]
+        self.last_move_coords = None
+        pygame.init()
+        self.screen = pygame.Surface(
+            (PYGAME_CANVAS_WIDTH, PYGAME_CANVAS_HEIGHT - INFO_BAR_HEIGHT),
+            pygame.SRCALPHA,
+        )
+
+    def set_board_state(self, board_state, last_move):
+        """Updates the canvas with a new board state and last move."""
+        self.board = board_state
+        self.last_move_coords = last_move
+        self.update()  # Trigger a repaint
+
+    def paintEvent(self, event):
+        """Paints the canvas."""
+        self.draw_frame()
+        view = pygame.surfarray.pixels3d(self.screen)
+        view = view.transpose([1, 0, 2])
+        img = QImage(
+            view.tobytes(),
+            view.shape[1],
+            view.shape[0],
+            view.shape[1] * 3,
+            QImage.Format.Format_RGB888,
+        )
+        painter = QPainter(self)
+        painter.drawImage(0, 0, img)
+
+    def draw_frame(self):
+        """Draws the entire frame: board, grid, highlight, pieces."""
+        self.screen.fill(COLOR_BOARD)
+        self.draw_board_grid()
+        self.draw_highlight()
+        self.draw_pieces()
+
+    def draw_highlight(self):
+        """Draws highlight lines for the last move."""
+        if not self.last_move_coords:
+            return
+        row, col = self.last_move_coords
+        pygame.draw.line(
+            self.screen,
+            COLOR_HIGHLIGHT,
+            (BOARD_MARGIN + col * CELL_SIZE, BOARD_MARGIN),
+            (BOARD_MARGIN + col * CELL_SIZE, BOARD_HEIGHT + BOARD_MARGIN),
+            2,
+        )
+        pygame.draw.line(
+            self.screen,
+            COLOR_HIGHLIGHT,
+            (BOARD_MARGIN, BOARD_MARGIN + row * CELL_SIZE),
+            (BOARD_WIDTH + BOARD_MARGIN, BOARD_MARGIN + row * CELL_SIZE),
+            2,
+        )
+
+    def draw_board_grid(self):
+        """Draws the grid lines and star points."""
+        for i in range(GRID_SIZE):
+            pygame.draw.line(
+                self.screen,
+                COLOR_LINE,
+                (BOARD_MARGIN + i * CELL_SIZE, BOARD_MARGIN),
+                (BOARD_MARGIN + i * CELL_SIZE, BOARD_HEIGHT + BOARD_MARGIN),
+            )
+            pygame.draw.line(
+                self.screen,
+                COLOR_LINE,
+                (BOARD_MARGIN, BOARD_MARGIN + i * CELL_SIZE),
+                (BOARD_WIDTH + BOARD_MARGIN, BOARD_MARGIN + i * CELL_SIZE),
+            )
+        for r, c in STAR_POINTS:
+            pygame.draw.circle(
+                self.screen,
+                COLOR_LINE,
+                (BOARD_MARGIN + c * CELL_SIZE, BOARD_MARGIN + r * CELL_SIZE),
+                6,
+            )
+
+    def draw_pieces(self):
+        """Draws all the pieces on the board."""
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                if self.board[r][c] != 0:
+                    piece_color = COLOR_BLACK if self.board[r][c] == 1 else COLOR_WHITE
+                    center = (
+                        BOARD_MARGIN + c * CELL_SIZE,
+                        BOARD_MARGIN + r * CELL_SIZE,
+                    )
+                    pygame.draw.circle(
+                        self.screen, piece_color, center, CELL_SIZE // 2 - 2
+                    )
+
+
+class ReplayWindow(QDialog):
+    """The main window for replaying a single game."""
+
+    def __init__(self, game_data, parent=None):
+        super().__init__(parent)
+        self.game_data = game_data
+        self.move_history = sorted(
+            game_data.get("move_history", []), key=lambda x: x["turn"]
+        )
+        self.player_names = game_data.get(
+            "player_setup", {"p1_name": "P1", "p2_name": "P2"}
+        )
+        self.current_turn_index = -1  # -1 means board is empty
+        self.init_ui()
+        self.update_view()
+
+    def init_ui(self):
+        """Initializes the UI components of the replay window."""
+        p1 = self.player_names["p1_name"]
+        p2 = self.player_names["p2_name"]
+        winner = self.game_data["winner_name"]
+        self.setWindowTitle(f"Replay: {p1} vs {p2} (Winner: {winner})")
+        self.setMinimumSize(PYGAME_CANVAS_WIDTH, PYGAME_CANVAS_HEIGHT)
+
+        layout = QVBoxLayout(self)
+
+        self.info_label = QLabel("Game Start")
+        self.info_label.setFont(QFont("Arial", 12, QFont.Bold))
+        self.info_label.setAlignment(Qt.AlignCenter)
+
+        self.canvas = ReplayCanvas(self)
+
+        controls_layout = QHBoxLayout()
+        self.prev_button = QPushButton("Previous")
+        self.next_button = QPushButton("Next")
+        self.timeline_slider = QSlider(Qt.Horizontal)
+        self.timeline_slider.setMinimum(-1)
+        self.timeline_slider.setMaximum(len(self.move_history) - 1)
+        self.timeline_slider.setValue(-1)
+
+        controls_layout.addWidget(self.prev_button)
+        controls_layout.addWidget(self.timeline_slider)
+        controls_layout.addWidget(self.next_button)
+
+        layout.addWidget(self.info_label)
+        layout.addWidget(self.canvas)
+        layout.addLayout(controls_layout)
+
+        self.prev_button.clicked.connect(self.prev_turn)
+        self.next_button.clicked.connect(self.next_turn)
+        self.timeline_slider.valueChanged.connect(self.slider_moved)
+
+    def update_view(self):
+        """Updates the entire view (board, label, buttons) based on the current turn."""
+        board_state = [[0] * GRID_SIZE for _ in range(GRID_SIZE)]
+        last_move = None
+
+        # Reconstruct board state up to the current turn
+        for i in range(self.current_turn_index + 1):
+            move_data = self.move_history[i]
+            r, c = move_data["move"]
+            color = move_data["color"]
+            board_state[r][c] = color
+
+        # Get info for the current move
+        if self.current_turn_index >= 0:
+            current_move = self.move_history[self.current_turn_index]
+            last_move = current_move["move"]
+            player_id = current_move["player_id"]
+            player_name = self.player_names.get(
+                f"p{player_id}_name", f"Player {player_id}"
+            )
+            color_str = "Black" if current_move["color"] == 1 else "White"
+            turn_num = current_move["turn"]
+            info_text = f"Turn {turn_num}: {player_name} ({color_str}) at {last_move}"
+        else:
+            info_text = "Game Start. Press 'Next' to begin."
+
+        self.info_label.setText(info_text)
+        self.canvas.set_board_state(board_state, last_move)
+
+        # Update slider without emitting signal
+        self.timeline_slider.blockSignals(True)
+        self.timeline_slider.setValue(self.current_turn_index)
+        self.timeline_slider.blockSignals(False)
+
+        # Update button states
+        self.prev_button.setEnabled(self.current_turn_index >= 0)
+        self.next_button.setEnabled(
+            self.current_turn_index < len(self.move_history) - 1
+        )
+
+    def next_turn(self):
+        """Moves to the next turn."""
+        if self.current_turn_index < len(self.move_history) - 1:
+            self.current_turn_index += 1
+            self.update_view()
+
+    def prev_turn(self):
+        """Moves to the previous turn."""
+        if self.current_turn_index >= 0:
+            self.current_turn_index -= 1
+            self.update_view()
+
+    def slider_moved(self, value):
+        """Handles the slider being moved by the user."""
+        self.current_turn_index = value
+        self.update_view()
+
+
+class ReplayDialog(QDialog):
+    """Dialog to select a game replay file."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Game Replay")
+        self.setMinimumSize(600, 400)
+        self.selected_filepath = None
+        self.history_dir = "game_history"
+
+        layout = QVBoxLayout(self)
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Date", "Opponents", "Turns", "Winner"])
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.itemDoubleClicked.connect(self.accept)
+
+        layout.addWidget(self.table)
+
+        self.button_box = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+
+        self.populate_games()
+
+    def populate_games(self):
+        """Scans the history directory and populates the table with game info."""
+        if not os.path.exists(self.history_dir):
+            QMessageBox.warning(
+                self, "No History", f"The directory '{self.history_dir}' was not found."
+            )
+            return
+
+        games = []
+        for filename in os.listdir(self.history_dir):
+            if filename.endswith(".json"):
+                filepath = os.path.join(self.history_dir, filename)
+                try:
+                    with open(filepath, "r") as f:
+                        data = json.load(f)
+                    games.append((filepath, data))
+                except (IOError, json.JSONDecodeError):
+                    print(f"Warning: Could not read or parse {filename}")
+
+        # Sort games by date, newest first
+        games.sort(key=lambda item: item[1].get("game_id", "0"), reverse=True)
+
+        self.table.setRowCount(len(games))
+        for row, (filepath, data) in enumerate(games):
+            p1 = data.get("player_setup", {}).get("p1_name", "P1")
+            p2 = data.get("player_setup", {}).get("p2_name", "P2")
+            opponents = f"{p1} vs {p2}"
+            turns = len(data.get("move_history", []))
+            winner = data.get("winner_name", "N/A")
+
+            # Format date from game_id
+            game_id = data.get("game_id", "Unknown")
+            try:
+                dt = datetime.strptime(game_id, "%Y%m%d_%H%M%S")
+                date_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                date_str = game_id
+
+            self.table.setItem(row, 0, QTableWidgetItem(date_str))
+            self.table.setItem(row, 1, QTableWidgetItem(opponents))
+            self.table.setItem(row, 2, QTableWidgetItem(str(turns)))
+            self.table.setItem(row, 3, QTableWidgetItem(winner))
+            # Store the full path in a user role for retrieval
+            self.table.item(row, 0).setData(Qt.UserRole, filepath)
+
+    def get_selected_filepath(self):
+        """Returns the file path of the selected game."""
+        selected_items = self.table.selectedItems()
+        if not selected_items:
+            return None
+        # Get the item from the first column of the selected row and retrieve its data
+        return selected_items[0].data(Qt.UserRole)
+
+    def accept(self):
+        """Overrides accept to ensure a selection is made."""
+        if not self.get_selected_filepath():
+            QMessageBox.warning(self, "No Selection", "Please select a game to replay.")
+            return
+        super().accept()
+
+
 class GomokuApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -956,20 +1261,47 @@ class GomokuApp(QMainWindow):
         self.batch_total_games = 0
         self.batch_current_game = 0
         self.batch_results = defaultdict(int)
+        # Keep references to open replay windows
+        self.replay_windows = []
 
     def _create_menu(self):
         menu_bar = self.menuBar()
         game_menu = menu_bar.addMenu("&Game")
         help_menu = menu_bar.addMenu("&Help")
+
         new_game_action = QAction("New Game", self)
-        exit_action = QAction("Exit", self)
-        rules_action = QAction("Game Rules", self)
         new_game_action.triggered.connect(self.prompt_new_game)
+        replay_action = QAction("Replay Game", self)
+        replay_action.triggered.connect(self.prompt_replay_selection)
+        exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close)
+
+        rules_action = QAction("Game Rules", self)
         rules_action.triggered.connect(self.rules_description)
+
         game_menu.addAction(new_game_action)
+        game_menu.addAction(replay_action)
+        game_menu.addSeparator()
         game_menu.addAction(exit_action)
         help_menu.addAction(rules_action)
+
+    def prompt_replay_selection(self):
+        """Opens the dialog to select a game for replay."""
+        dialog = ReplayDialog(self)
+        if dialog.exec_():
+            filepath = dialog.get_selected_filepath()
+            if filepath:
+                try:
+                    with open(filepath, "r") as f:
+                        game_data = json.load(f)
+                    # Create and show the replay window
+                    replay_win = ReplayWindow(game_data, self)
+                    self.replay_windows.append(replay_win)  # Keep a reference
+                    replay_win.show()
+                except (IOError, json.JSONDecodeError) as e:
+                    QMessageBox.critical(
+                        self, "Error", f"Could not load replay file: {e}"
+                    )
 
     def start_game_loop(self):
         self.stop_game_loop()
@@ -1141,10 +1473,11 @@ class GomokuApp(QMainWindow):
         self.game_engine.sub_info_label.setText("")
 
     def save_game_history(self, winner_id):
-        if not os.path.exists("game_history"):
-            os.makedirs("game_history")
+        history_dir = "game_history"
+        if not os.path.exists(history_dir):
+            os.makedirs(history_dir)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"./game_history/game_{timestamp}.json"
+        filename = os.path.join(history_dir, f"game_{timestamp}.json")
         player_names = self.game_engine.canvas.player_names
 
         if winner_id == 0:
