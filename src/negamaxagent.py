@@ -20,7 +20,7 @@ log_filename = f"./logs/negamax_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(log_filename), logging.StreamHandler()],
+    handlers=[logging.FileHandler(log_filename)],  # , logging.StreamHandler()
 )
 logger = logging.getLogger(__name__)
 
@@ -33,34 +33,23 @@ WHITE = 2
 TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
 MAX_DEPTH = 50  # Max search depth for IDDFS
 MIN_DEPTH = 3  # The minimum depth the AI must complete, regardless of time.
-TOP_K_BY_DEPTH = [32, 24, 16, 8]
+TOP_K_BY_DEPTH = [32, 28, 24, 20]
 
 
 """
 The values for opponent's threats ('opp') are now significantly higher than 'mine'
 to force the AI to block critical threats instead of making risky offensive moves.
 """
-# SCORE_TABLE = {
-#     "FIVE": {"mine": 100_000_000, "opp": 100_000_000},
-#     "LIVE_FOUR": {"mine": 10_000_000, "opp": 50_000_000},
-#     "RUSH_FOUR": {"mine": 1_000_000, "opp": 1_000_000},
-#     "DOUBLE_THREE": {"mine": 1_000_000, "opp": 50_000_000},
-#     "LIVE_THREE": {"mine": 100_000, "opp": 1_000_000},
-#     "SLEEPY_THREE": {"mine": 10_000, "opp": 10_000},
-#     "LIVE_TWO": {"mine": 1_000, "opp": 2_000},
-#     "SLEEPY_TWO": {"mine": 100, "opp": 200},
-#     "SINGLE": {"mine": 10, "opp": 20},
-# }
 SCORE_TABLE = {
-    "FIVE": {"mine": 100_000_000, "opp": 500_000_000},
+    "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
     "LIVE_FOUR": {"mine": 10_000_000, "opp": 50_000_000},
-    "RUSH_FOUR": {"mine": 800_000, "opp": 1_000_000},
+    "RUSH_FOUR": {"mine": 5_000_000, "opp": 25_000_000},
     "DOUBLE_THREE": {"mine": 10_000_000, "opp": 50_000_000},
-    "LIVE_THREE": {"mine": 1_000_000, "opp": 5_000_000},
-    "SLEEPY_THREE": {"mine": 500, "opp": 1_000},
-    "LIVE_TWO": {"mine": 100, "opp": 500},
-    "SLEEPY_TWO": {"mine": 10, "opp": 20},
-    "SINGLE": {"mine": 1, "opp": 2},
+    "LIVE_THREE": {"mine": 100_000, "opp": 500_000},
+    "SLEEPY_THREE": {"mine": 50_000, "opp": 250_000},
+    "LIVE_TWO": {"mine": 50_000, "opp": 250_000},
+    "SLEEPY_TWO": {"mine": 100, "opp": 1_000},
+    "SINGLE": {"mine": 10, "opp": 500},
 }
 PATTERNS_PLAYER = {
     "FIVE": re.compile(r"11111"),
@@ -88,7 +77,7 @@ class GamePhase:
     SWAP2_P1_CHOOSE_COLOR = 4
 
 
-# Flask app setup
+# --- Flask App Setup ---
 app = Flask(__name__)
 
 
@@ -588,7 +577,6 @@ class NegamaxAgent:
         }
         return max_score, best_move
 
-    # --- Quiescence Search and other helpers remain unchanged ---
     def quiescence_search(self, alpha, beta, player, q_depth):
         if time.time() - self.start_time > TIME_LIMIT:
             raise TimeoutException()
@@ -669,6 +657,39 @@ class NegamaxAgent:
                 return True
         return False
 
+    def _has_threat(self, patterns):
+        threat_keywords = [
+            "LIVE_FOUR",
+            "RUSH_FOUR",
+            "LIVE_THREE",
+        ]
+
+        return any(patterns.get(k, 0) > 0 for k in threat_keywords)
+
+    def _get_next_joseki_move(self, player):
+        if not self.joseki_book or np.sum(self.board != EMPTY) >= 15:
+            return None
+
+        # Check if there are any immediate threats
+        self_patterns = self._find_patterns_fast(player)
+        opp_patterns = self._find_patterns_fast(3 - player)
+        if self._has_threat(self_patterns) or self._has_threat(opp_patterns):
+            return None
+
+        # otherwise move to the next joseki move
+        player_step_mod = 0 if player == BLACK else 1
+        preferred_trend = 1 if player == BLACK else 2
+        preferred_josekis = [
+            j for j in self.joseki_book if j["trend"] == preferred_trend
+        ]
+        for joseki in preferred_josekis:
+            for idx, move in enumerate(joseki["joseki"]):
+                r, c = move[:2]
+                if idx % 2 == player_step_mod and self.board[r, c] == EMPTY:
+                    return (r, c)
+
+        return None
+
     def find_best_move(self, board_state, player, banned_moves_enabled):
         self.board = np.array(board_state)
         self.start_time = time.time()
@@ -677,6 +698,13 @@ class NegamaxAgent:
         self.history_heuristic.clear()
         best_move_so_far = None
         final_search_depth = 0
+
+        joseki_move = self._get_next_joseki_move(player)
+        if joseki_move:
+            logger.info(
+                f"Joseki move found: {joseki_move} for player {player}. Returning immediately."
+            )
+            return joseki_move, 0
 
         for depth in range(1, MAX_DEPTH + 1):
             try:
@@ -714,15 +742,14 @@ class NegamaxAgent:
                 break
 
         if not best_move_so_far:
-            logger.warning(
-                "Search failed or timed out. Falling back to first possible move."
-            )
             possible_moves = self.get_possible_moves(
                 player, banned_moves_enabled, 0, None
             )
             if possible_moves:
                 best_move_so_far = possible_moves[0]
-            final_search_depth = 0
+            logger.info(
+                f"Search failed or timed out. Falling back to first possible move: {best_move_so_far}"
+            )
 
         return best_move_so_far, final_search_depth
 
