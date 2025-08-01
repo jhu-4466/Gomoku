@@ -839,6 +839,10 @@ class NewGameDialog(QDialog):
 
         self.right_player_group = QGroupBox("Player 2")
         right_player_layout = QVBoxLayout(self.right_player_group)
+        # human_right_radio = QRadioButton("Human")
+        # human_right_radio.setChecked(True)
+        # self.right_player_buttons.append({"name": "Human", "radio": human_right_radio})
+        # right_player_layout.addWidget(human_right_radio)
         for i, agent in enumerate(agent_players):
             radio = QRadioButton(agent["name"])
             if i == 0:
