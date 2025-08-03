@@ -522,6 +522,11 @@ class NegamaxAgent:
         including static threat analysis, to achieve
         Threat Space Search.
         """
+        board_hash = self._compute_hash(player)
+        tt_entry = self.transposition_table.get(board_hash)
+        if tt_entry and "sorted_moves" in tt_entry:
+            return tt_entry["sorted_moves"]
+
         if not np.any(self.board):
             return [(self.board_size // 2, self.board_size // 2)]
 
@@ -791,6 +796,7 @@ class NegamaxAgent:
                 "flag": flag,
                 "move": best_move,
                 "age": self.search_generation,
+                "sorted_moves": moves,
             }
 
         return max_score, best_move
