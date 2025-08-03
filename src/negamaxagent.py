@@ -42,10 +42,10 @@ to force the AI to block critical threats instead of making risky offensive move
 """
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
-    "LIVE_FOUR": {"mine": 70_000, "opp": 150_000},
+    "LIVE_FOUR": {"mine": 100_000, "opp": 200_000},
     "DOUBLE_THREE": {"mine": 50_000, "opp": 150_000},
-    "RUSH_FOUR": {"mine": 10_000, "opp": 20_000},
-    "LIVE_THREE": {"mine": 7_000, "opp": 15_000},
+    "RUSH_FOUR": {"mine": 30_000, "opp": 50_000},
+    "LIVE_THREE": {"mine": 15_000, "opp": 30_000},
     "SLEEPY_THREE": {"mine": 800, "opp": 1500},
     "LIVE_TWO": {"mine": 500, "opp": 1000},
     "SLEEPY_TWO": {"mine": 100, "opp": 200},
@@ -93,6 +93,7 @@ class NegamaxAgent:
         self.transposition_table = {}
         self.start_time = 0
         self.board = np.zeros((board_size, board_size), dtype=int)
+        self.current_turn = 0
 
         self.killer_moves = [[None, None] for _ in range(MAX_DEPTH + 1)]
         self.history_heuristic = defaultdict(int)
@@ -427,7 +428,7 @@ class NegamaxAgent:
         if is_strong_offense and is_strong_defense:
             score += SCORE_TABLE["SYNERGY_BONUS"]["mine"]
 
-        score += self._evaluate_global_potential(r, c, player)
+        # score += self._evaluate_global_potential(r, c, player)
         return score
 
     def get_possible_moves(self, player, banned_moves_enabled, depth, hash_move):
@@ -547,14 +548,20 @@ class NegamaxAgent:
         if depth > 0:
             absolute_depth = self.current_search_depth - depth
             if absolute_depth < 0:
-                absolute_depth = 0  # Safeguard
+                absolute_depth = 0
 
-            if absolute_depth < len(TOP_K_BY_DEPTH):
-                top_k = TOP_K_BY_DEPTH[absolute_depth]
+            if move_scores:
+                eval_spread = max(move_scores.values()) - min(move_scores.values())
+                if eval_spread > 20000:  # Just a magic number
+                    top_k = max(
+                        8,
+                        TOP_K_BY_DEPTH[min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)]
+                        // 2,
+                    )
+                else:
+                    top_k = TOP_K_BY_DEPTH[min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)]
             else:
-                top_k = TOP_K_BY_DEPTH[
-                    -1
-                ]  # Use the last value as a default for deeper nodes.
+                top_k = TOP_K_BY_DEPTH[min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)]
 
             if len(final_ordered_list) > top_k:
                 return final_ordered_list[:top_k]
@@ -677,13 +684,16 @@ class NegamaxAgent:
         elif max_score >= beta:
             flag = "LOWERBOUND"
 
-        self.transposition_table[board_hash] = {
-            "score": max_score,
-            "depth": depth,
-            "flag": flag,
-            "move": best_move,
-            "age": self.search_generation,
-        }
+        existing_entry = self.transposition_table.get(board_hash)
+        if not existing_entry or depth >= existing_entry["depth"]:
+            self.transposition_table[board_hash] = {
+                "score": max_score,
+                "depth": depth,
+                "flag": flag,
+                "move": best_move,
+                "age": self.search_generation,
+            }
+
         return max_score, best_move
 
     def quiescence_search(self, alpha, beta, player, q_depth):
@@ -811,7 +821,7 @@ class NegamaxAgent:
         joseki_move = self._get_next_joseki_move(player)
         if joseki_move:
             logger.info(
-                f"Joseki move found: {joseki_move} for player {player}. Returning immediately."
+                f"[Turn {self.current_turn}] Joseki move found: {joseki_move} for player {player}. Returning immediately."
             )
             return joseki_move, 0
 
@@ -829,24 +839,24 @@ class NegamaxAgent:
 
                 elapsed_time = time.time() - self.start_time
                 logger.info(
-                    f"Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
+                    f"[Turn {self.current_turn}] Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
                 )
 
-                if abs(score) >= SCORE_TABLE["DOUBLE_THREE"]["mine"] - MAX_DEPTH:
+                if abs(score) >= SCORE_TABLE["FIVE"]["mine"] - MAX_DEPTH:
                     logger.info("Terminal sequence found. Halting search.")
                     break
             except TimeoutException:
                 logger.warning(
-                    f"Timeout! Search at depth {depth} was forcefully interrupted."
+                    f"[Turn {self.current_turn}] Timeout! Search at depth {depth} was forcefully interrupted."
                 )
                 final_search_depth = depth - 1
                 logger.info(
-                    f"Returning best move from last completed depth ({final_search_depth})."
+                    f"[Turn {self.current_turn}] Returning best move from last completed depth ({final_search_depth})."
                 )
                 break
             except Exception:
                 logger.exception(
-                    f"An unexpected error occurred during search at depth {depth}."
+                    f"[Turn {self.current_turn}] An unexpected error occurred during search at depth {depth}."
                 )
                 break
 
@@ -887,8 +897,14 @@ def get_move():
         if is_new_game:
             agent.reset_for_new_game()
 
+        """
+        Logs
+        """
+        agent.board = np.array(board)
+        stone_count = np.count_nonzero(agent.board)
+        agent.current_turn = stone_count + 1
         logger.info(
-            f"Received request for game_phase: {game_phase}, color_to_play: {color_to_play}"
+            f"[Turn {agent.current_turn}] Received request for game_phase: {game_phase}, color_to_play: {color_to_play}"
         )
 
         agent.board = np.array(board)
