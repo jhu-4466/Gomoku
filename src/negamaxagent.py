@@ -42,14 +42,15 @@ to force the AI to block critical threats instead of making risky offensive move
 """
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
-    "LIVE_FOUR": {"mine": 10_000_000, "opp": 50_000_000},
-    "RUSH_FOUR": {"mine": 5_000_000, "opp": 25_000_000},
-    "DOUBLE_THREE": {"mine": 10_000_000, "opp": 50_000_000},
-    "LIVE_THREE": {"mine": 100_000, "opp": 500_000},
-    "SLEEPY_THREE": {"mine": 50_000, "opp": 250_000},
-    "LIVE_TWO": {"mine": 50_000, "opp": 250_000},
-    "SLEEPY_TWO": {"mine": 100, "opp": 1_000},
-    "SINGLE": {"mine": 10, "opp": 500},
+    "LIVE_FOUR": {"mine": 70_000, "opp": 150_000},
+    "DOUBLE_THREE": {"mine": 50_000, "opp": 150_000},
+    "RUSH_FOUR": {"mine": 10_000, "opp": 20_000},
+    "LIVE_THREE": {"mine": 7_000, "opp": 15_000},
+    "SLEEPY_THREE": {"mine": 800, "opp": 1500},
+    "LIVE_TWO": {"mine": 500, "opp": 1000},
+    "SLEEPY_TWO": {"mine": 100, "opp": 200},
+    "SYNERGY_BONUS": {"mine": 3000, "opp": 3000},
+    "POSITIONAL_BONUS_FACTOR": 5,
 }
 PATTERNS_PLAYER = {
     "FIVE": re.compile(r"11111"),
@@ -260,7 +261,23 @@ class NegamaxAgent:
         if op_patterns.get("LIVE_THREE", 0) >= 2:  # Double Live Three
             op_score += SCORE_TABLE["DOUBLE_THREE"]["opp"]
 
-        return my_score - op_score
+        # -- positional bonus ---
+        center = self.board_size // 2
+        positional_bonus = 0
+        my_stones = np.argwhere(self.board == player_to_move)
+        op_stones = np.argwhere(self.board == (3 - player_to_move))
+
+        factor = SCORE_TABLE["POSITIONAL_BONUS_FACTOR"]
+
+        for r, c in my_stones:
+            dist = max(abs(r - center), abs(c - center))
+            positional_bonus += (center - dist) * factor
+
+        for r, c in op_stones:
+            dist = max(abs(r - center), abs(c - center))
+            positional_bonus -= (center - dist) * factor
+
+        return my_score - op_score + positional_bonus
 
     def _find_patterns_fast(self, player):
         patterns = defaultdict(int)
@@ -294,6 +311,33 @@ class NegamaxAgent:
 
         return patterns
 
+    def _evaluate_global_potential(self, r, c, player):
+        # Value of opponent potential patterns
+        opponent = 3 - player
+        self.board[r, c] = opponent
+        opp_patterns_before = self._find_patterns_fast(opponent)
+        opp_potential = (
+            opp_patterns_before.get("LIVE_TWO", 0) * SCORE_TABLE["LIVE_TWO"]["opp"]
+            + opp_patterns_before.get("SLEEPY_THREE", 0)
+            * SCORE_TABLE["SLEEPY_THREE"]["opp"]
+            + opp_patterns_before.get("LIVE_THREE", 0)
+            * SCORE_TABLE["LIVE_THREE"]["opp"]
+        )
+        self.board[r, c] = EMPTY
+
+        # Value of our potential patterns
+        self.board[r, c] = player
+        my_new_patterns = self._find_patterns_fast(player)
+        my_potential = (
+            my_new_patterns.get("LIVE_TWO", 0) * SCORE_TABLE["LIVE_TWO"]["mine"]
+            + my_new_patterns.get("SLEEPY_THREE", 0)
+            * SCORE_TABLE["SLEEPY_THREE"]["mine"]
+            + my_new_patterns.get("LIVE_THREE", 0) * SCORE_TABLE["LIVE_THREE"]["mine"]
+        )
+        self.board[r, c] = EMPTY
+
+        return my_potential + opp_potential
+
     def _rate_move_statically(self, r, c, player):
         """
         Statically evaluate the threat of a single move for sorting purposes.
@@ -301,7 +345,14 @@ class NegamaxAgent:
         score = 0
         opponent = 3 - player
 
-        # --- Offensive Check ---
+        # --- 1. Positional Bonus ---
+        center = self.board_size // 2
+        dist = max(abs(r - center), abs(c - center))
+        score += (center - dist) * SCORE_TABLE["POSITIONAL_BONUS_FACTOR"]
+
+        # --- 2. Offensive Check ---
+        my_offensive_score = 0
+
         self.board[r, c] = player
         for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             line_chars = []
@@ -320,7 +371,7 @@ class NegamaxAgent:
             line = "".join(line_chars)
 
             if "011110" in line:
-                score += SCORE_TABLE["LIVE_FOUR"]["mine"]
+                my_offensive_score += SCORE_TABLE["LIVE_FOUR"]["mine"]
             if (
                 "211110" in line
                 or "011112" in line
@@ -328,12 +379,15 @@ class NegamaxAgent:
                 or "11011" in line
                 or "11101" in line
             ):
-                score += SCORE_TABLE["RUSH_FOUR"]["mine"]
+                my_offensive_score += SCORE_TABLE["RUSH_FOUR"]["mine"]
             if "01110" in line or "010110" in line:
-                score += SCORE_TABLE["LIVE_THREE"]["mine"]
+                my_offensive_score += SCORE_TABLE["LIVE_THREE"]["mine"]
+        score += my_offensive_score
         self.board[r, c] = EMPTY
 
-        # --- Defensive Check ---
+        # --- 3. Defensive Check ---
+        my_defensive_score = 0
+
         self.board[r, c] = opponent
         for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             line_chars = []
@@ -352,7 +406,7 @@ class NegamaxAgent:
             line = "".join(line_chars)
 
             if "011110" in line:
-                score += SCORE_TABLE["LIVE_FOUR"]["opp"]
+                my_defensive_score += SCORE_TABLE["LIVE_FOUR"]["opp"]
             if (
                 "211110" in line
                 or "011112" in line
@@ -360,11 +414,20 @@ class NegamaxAgent:
                 or "11011" in line
                 or "11101" in line
             ):
-                score += SCORE_TABLE["RUSH_FOUR"]["opp"]
+                my_defensive_score += SCORE_TABLE["RUSH_FOUR"]["opp"]
             if "01110" in line or "010110" in line:
-                score += SCORE_TABLE["LIVE_THREE"]["opp"]
+                my_defensive_score += SCORE_TABLE["LIVE_THREE"]["opp"]
+        score += my_defensive_score
         self.board[r, c] = EMPTY
 
+        # --- 4. Synergy Bonus ---
+        is_strong_offense = my_offensive_score >= SCORE_TABLE["LIVE_THREE"]["mine"]
+        is_strong_defense = my_defensive_score >= SCORE_TABLE["LIVE_THREE"]["opp"]
+        # The most synergistic move is blocking a major threat while creating one.
+        if is_strong_offense and is_strong_defense:
+            score += SCORE_TABLE["SYNERGY_BONUS"]["mine"]
+
+        score += self._evaluate_global_potential(r, c, player)
         return score
 
     def get_possible_moves(self, player, banned_moves_enabled, depth, hash_move):
@@ -398,13 +461,34 @@ class NegamaxAgent:
             return [tuple(cell) for cell in empty_cells]
 
         opponent = 3 - player
-        my_win_moves = [m for m in moves if self._check_win_by_move(m[0], m[1], player)]
-        if my_win_moves:
-            return my_win_moves
 
+        # --- Check for immediate winning moves ---
+        my_win_moves = [m for m in moves if self._check_win_by_move(m[0], m[1], player)]
         opponent_win_moves = [
             m for m in moves if self._check_win_by_move(m[0], m[1], opponent)
         ]
+
+        # --- Urgent moves: Immediate threats ---
+        my_urgent_attacks = []
+        opponent_urgent_defenses = []
+        for r, c in moves:
+            self.board[r, c] = player
+            my_patterns = self._find_patterns_fast(player)
+            if (
+                my_patterns.get("LIVE_FOUR", 0) > 0
+                or my_patterns.get("LIVE_THREE", 0) >= 2
+            ):
+                my_urgent_attacks.append((r, c))
+            self.board[r, c] = EMPTY
+
+            self.board[r, c] = opponent
+            opp_patterns = self._find_patterns_fast(opponent)
+            if (
+                opp_patterns.get("LIVE_FOUR", 0) > 0
+                or opp_patterns.get("LIVE_THREE", 0) >= 2
+            ):
+                opponent_urgent_defenses.append((r, c))
+            self.board[r, c] = EMPTY
 
         # --- Threat-based move ordering ---
         move_scores = {
@@ -417,13 +501,38 @@ class NegamaxAgent:
 
         # --- Final prioritized list construction ---
         final_ordered_list = []
-        # 1. Hash Move from Transposition Table
-        if hash_move and hash_move in moves:
-            final_ordered_list.append(hash_move)
-        # 2. Urgent: Opponent's winning moves
+        # 1. Urgent: winning and threatening moves
+        # (1) Winning moves
+        for move in my_win_moves:
+            if move not in final_ordered_list:
+                final_ordered_list.append(move)
         for move in opponent_win_moves:
             if move not in final_ordered_list:
                 final_ordered_list.append(move)
+        # (2) Live Four and Double Three moves
+        my_must_win_moves = []
+        opponent_must_defend_moves = []
+        for r, c in moves:
+            self.board[r, c] = player
+            patterns = self._find_patterns_fast(player)
+            if patterns.get("LIVE_FOUR", 0) > 0 or patterns.get("LIVE_THREE", 0) >= 2:
+                my_must_win_moves.append((r, c))
+            self.board[r, c] = EMPTY
+        for r, c in moves:
+            self.board[r, c] = opponent
+            patterns = self._find_patterns_fast(opponent)
+            if patterns.get("LIVE_FOUR", 0) > 0 or patterns.get("LIVE_THREE", 0) >= 2:
+                opponent_must_defend_moves.append((r, c))
+            self.board[r, c] = EMPTY
+        for move in opponent_must_defend_moves:
+            if move not in final_ordered_list:
+                final_ordered_list.append(move)
+        for move in my_must_win_moves:
+            if move not in final_ordered_list:
+                final_ordered_list.append(move)
+        # 2. Hash Move from Transposition Table
+        if hash_move and hash_move in moves:
+            final_ordered_list.append(hash_move)
         # 3. Killer Moves
         killers = self.killer_moves[depth]
         if killers[0] and killers[0] in moves and killers[0] not in final_ordered_list:
@@ -518,7 +627,7 @@ class NegamaxAgent:
             self.board[r, c] = player
 
             if self._check_win_by_move(r, c, player):
-                score = SCORE_TABLE["FIVE"]["mine"] - (MAX_DEPTH - depth)
+                score = SCORE_TABLE["DOUBLE_THREE"]["mine"] - (MAX_DEPTH - depth)
             else:
                 reduction = 0
                 extension = 0
@@ -667,7 +776,7 @@ class NegamaxAgent:
         return any(patterns.get(k, 0) > 0 for k in threat_keywords)
 
     def _get_next_joseki_move(self, player):
-        if not self.joseki_book or np.sum(self.board != EMPTY) >= 15:
+        if not self.joseki_book or np.sum(self.board != EMPTY) >= 10:
             return None
 
         # Check if there are any immediate threats
@@ -723,7 +832,7 @@ class NegamaxAgent:
                     f"Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
                 )
 
-                if abs(score) >= SCORE_TABLE["FIVE"]["mine"] - MAX_DEPTH:
+                if abs(score) >= SCORE_TABLE["DOUBLE_THREE"]["mine"] - MAX_DEPTH:
                     logger.info("Terminal sequence found. Halting search.")
                     break
             except TimeoutException:
