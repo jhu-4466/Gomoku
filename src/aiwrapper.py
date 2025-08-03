@@ -9,11 +9,11 @@ import queue
 from flask import Flask, request, jsonify
 
 
-# --- The RAPFIWrapper Class (Integrated) ---
+# --- The AgentWrapper Class (Integrated) ---
 # This class handles the low-level, persistent communication with the AI process.
-class RAPFIWrapper:
+class AgentWrapper:
     def __init__(self, exe_path, board_size=15):
-        """Launches the RAPFI engine subprocess and prepares for communication."""
+        """Launches the Agent engine subprocess and prepares for communication."""
         self.process = subprocess.Popen(
             [exe_path],
             stdin=subprocess.PIPE,
@@ -193,10 +193,18 @@ if __name__ == "__main__":
         default=5004,
         help="Port number for this wrapper server to run on (default: 5004)",
     )
+    parser.add_argument(
+        "-s",
+        "--size",
+        type=int,
+        default=15,
+        help="Size of the Gomoku board (default: 15)",
+    )
     args = parser.parse_args()
 
     AI_EXECUTABLE_PATH = os.path.abspath(args.model_path)
     SERVER_PORT = args.port
+    GRID_SIZE = args.size
 
     if not os.path.exists(AI_EXECUTABLE_PATH):
         print(
@@ -205,7 +213,7 @@ if __name__ == "__main__":
         exit(1)
 
     print(f"Initializing Gomoku Engine Wrapper for '{AI_EXECUTABLE_PATH}'...")
-    gomoku_engine_wrapper = RAPFIWrapper(AI_EXECUTABLE_PATH)
+    gomoku_engine_wrapper = AgentWrapper(AI_EXECUTABLE_PATH, board_size=GRID_SIZE)
 
     print(
         f"--- Wrapper Initialized. Starting server on http://127.0.0.1:{SERVER_PORT} ---"
