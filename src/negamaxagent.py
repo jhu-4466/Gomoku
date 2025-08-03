@@ -45,7 +45,7 @@ SCORE_TABLE = {
     "LIVE_FOUR": {"mine": 100_000, "opp": 200_000},
     "DOUBLE_THREE": {"mine": 50_000, "opp": 150_000},
     "RUSH_FOUR": {"mine": 30_000, "opp": 50_000},
-    "LIVE_THREE": {"mine": 15_000, "opp": 30_000},
+    "LIVE_THREE": {"mine": 15_000, "opp": 35_000},
     "SLEEPY_THREE": {"mine": 800, "opp": 1500},
     "LIVE_TWO": {"mine": 500, "opp": 1000},
     "SLEEPY_TWO": {"mine": 100, "opp": 200},
@@ -87,12 +87,122 @@ class TimeoutException(Exception):
     pass
 
 
+class IncrementalEvaluator:
+    """
+    Manages board evaluation incrementally to avoid expensive full-board scans.
+    """
+
+    def __init__(self, board_size=15):
+        self.board_size = board_size
+        self.lines = (
+            {}
+        )  # Stores all line coordinates, e.g., { "h_0": [(0,0), ...], ... }
+        self.line_to_squares = {}  # Maps line_id to the set of squares in it
+        self.square_to_lines = defaultdict(list)  # Maps (r,c) to list of line_ids
+
+        self.line_values = defaultdict(int)  # Stores the score of each line
+        self.total_score = 0
+
+        self._init_lines()
+
+    def _init_lines(self):
+        # Pre-calculates all horizontal, vertical, and diagonal lines
+        # and maps squares to the lines they belong to.
+        # Horizontal
+        for r in range(self.board_size):
+            line_id = f"h_{r}"
+            self.lines[line_id] = [(r, c) for c in range(self.board_size)]
+        # Vertical
+        for c in range(self.board_size):
+            line_id = f"v_{c}"
+            self.lines[line_id] = [(r, c) for r in range(self.board_size)]
+        # Diagonal (top-left to bottom-right)
+        for i in range(self.board_size * 2 - 1):
+            line_id = f"d1_{i}"
+            self.lines[line_id] = []
+            for r in range(self.board_size):
+                c = r - (self.board_size - 1 - i)
+                if 0 <= c < self.board_size:
+                    self.lines[line_id].append((r, c))
+        # Diagonal (top-right to bottom-left)
+        for i in range(self.board_size * 2 - 1):
+            line_id = f"d2_{i}"
+            self.lines[line_id] = []
+            for r in range(self.board_size):
+                c = (self.board_size - 1 - r) - (self.board_size - 1 - i)
+                if 0 <= c < self.board_size:
+                    self.lines[line_id].append((r, c))
+
+        # Create the reverse mappings
+        for line_id, squares in self.lines.items():
+            self.line_to_squares[line_id] = set(squares)
+            for r, c in squares:
+                self.square_to_lines[(r, c)].append(line_id)
+
+    def _score_line(self, line_str):
+        # Scores a single line string based on patterns
+        score = 0
+        # Player 1 (Black)
+        p1_board = line_str.replace("2", "0")
+        for pattern_name, regex in PATTERNS_PLAYER.items():
+            count = len(regex.findall(p1_board))
+            if count > 0:
+                score += SCORE_TABLE[pattern_name]["mine"] * count
+        # Player 2 (White)
+        p2_board = line_str.replace("1", "X").replace("2", "1").replace("X", "2")
+        for pattern_name, regex in PATTERNS_PLAYER.items():
+            count = len(regex.findall(p2_board))
+            if count > 0:
+                score -= SCORE_TABLE[pattern_name]["opp"] * count
+        return score
+
+    def full_recalc(self, board):
+        # Calculates the score of the entire board from scratch.
+        # Called once at the beginning of each move search.
+        self.total_score = 0
+        self.line_values.clear()
+
+        for line_id, squares in self.lines.items():
+            line_str = "".join(str(board[r, c]) for r, c in squares)
+            line_score = self._score_line(line_str)
+            self.line_values[line_id] = line_score
+            self.total_score += line_score
+
+    def update_score(self, board, r, c, player):
+        # The core incremental update function.
+        # It's called BEFORE the move is made on the main board.
+        affected_lines = self.square_to_lines[(r, c)]
+
+        for line_id in affected_lines:
+            # 1. Subtract the old score of the line
+            self.total_score -= self.line_values[line_id]
+
+            # 2. Recalculate the new score for the line
+            squares = self.lines[line_id]
+            # Temporarily make the move to build the string
+            board[r, c] = player
+            new_line_str = "".join(str(board[sq_r, sq_c]) for sq_r, sq_c in squares)
+            board[r, c] = EMPTY  # Revert immediately
+
+            new_line_score = self._score_line(new_line_str)
+
+            # 3. Add the new score and update the line value
+            self.line_values[line_id] = new_line_score
+            self.total_score += new_line_score
+
+    def get_current_score(self, player_to_move):
+        # Returns the score from the perspective of the current player.
+        # In our calculation, positive is good for Black, negative for White.
+        return self.total_score if player_to_move == BLACK else -self.total_score
+
+
 class NegamaxAgent:
     def __init__(self, board_size=15):
         self.board_size = board_size
         self.transposition_table = {}
         self.start_time = 0
         self.board = np.zeros((board_size, board_size), dtype=int)
+        self.evaluator = IncrementalEvaluator(board_size)
         self.current_turn = 0
 
         self.killer_moves = [[None, None] for _ in range(MAX_DEPTH + 1)]
@@ -252,33 +362,8 @@ class NegamaxAgent:
         return threes, fours
 
     def evaluate_board(self, player_to_move):
-        my_patterns = self._find_patterns_fast(player_to_move)
-        op_patterns = self._find_patterns_fast(3 - player_to_move)
-
-        my_score = sum(SCORE_TABLE[p]["mine"] * c for p, c in my_patterns.items())
-        op_score = sum(SCORE_TABLE[p]["opp"] * c for p, c in op_patterns.items())
-        if my_patterns.get("LIVE_THREE", 0) >= 2:  # Double Live Three
-            my_score += SCORE_TABLE["DOUBLE_THREE"]["mine"]
-        if op_patterns.get("LIVE_THREE", 0) >= 2:  # Double Live Three
-            op_score += SCORE_TABLE["DOUBLE_THREE"]["opp"]
-
-        # -- positional bonus ---
-        center = self.board_size // 2
-        positional_bonus = 0
-        my_stones = np.argwhere(self.board == player_to_move)
-        op_stones = np.argwhere(self.board == (3 - player_to_move))
-
-        factor = SCORE_TABLE["POSITIONAL_BONUS_FACTOR"]
-
-        for r, c in my_stones:
-            dist = max(abs(r - center), abs(c - center))
-            positional_bonus += (center - dist) * factor
-
-        for r, c in op_stones:
-            dist = max(abs(r - center), abs(c - center))
-            positional_bonus -= (center - dist) * factor
-
-        return my_score - op_score + positional_bonus
+        self.evaluator.full_recalc(self.board)
+        return self.evaluator.get_current_score(player_to_move)
 
     def _find_patterns_fast(self, player):
         patterns = defaultdict(int)
@@ -605,11 +690,14 @@ class NegamaxAgent:
                 return tt_entry["score"], tt_entry.get("move")
 
         if depth == 0:
-            return self.quiescence_search(alpha, beta, player, 2), None
+            # At leaf nodes, call quiescence search for tactical stability
+            q_score = self.quiescence_search(alpha, beta, player, q_depth=2)
+            return q_score, None
 
-        # Null-move pruning. Avoid the root of the search iteration
+        # Null-move pruning
         is_not_root_node = depth < self.current_search_depth
         if depth >= 3 and np.any(self.board) and is_not_root_node:
+            # When we do a null move, we don't change the board or the score
             score, _ = self.negamax(
                 depth - 3, -beta, -beta + 1, 3 - player, banned_moves_enabled
             )
@@ -621,30 +709,31 @@ class NegamaxAgent:
         hash_move = tt_entry.get("move") if tt_entry else None
         moves = self.get_possible_moves(player, banned_moves_enabled, depth, hash_move)
 
-        if depth == self.current_search_depth:
-            self.total_nodes_at_root = len(moves)
         if not moves:
             return 0, None
 
         for i, move in enumerate(moves):
             r, c = move
-            if depth == self.current_search_depth:
-                self.nodes_evaluated_at_root = i + 1
 
+            # Store original scores before making a move to allow for perfect restoration
+            original_total_score = self.evaluator.total_score
+            original_line_values = {
+                line_id: self.evaluator.line_values[line_id]
+                for line_id in self.evaluator.square_to_lines[(r, c)]
+            }
+
+            # Make the move and update the score incrementally
+            self.evaluator.update_score(self.board, r, c, player)
             self.board[r, c] = player
 
             if self._check_win_by_move(r, c, player):
-                score = SCORE_TABLE["DOUBLE_THREE"]["mine"] - (MAX_DEPTH - depth)
+                score = SCORE_TABLE["FIVE"]["mine"]
             else:
+                # Late Move Reduction / Extensions logic (no change needed here)
                 reduction = 0
                 extension = 0
-
-                if move == hash_move:
-                    extension = 1
-
                 if self._is_vcf_threat(move, player, banned_moves_enabled):
                     extension = 1
-
                 if depth >= 3 and i >= 3 and extension == 0:
                     reduction = 2
 
@@ -664,7 +753,17 @@ class NegamaxAgent:
                     )
                     score = -score
 
+            # 3. Undo the move and restore the score state EXACTLY
             self.board[r, c] = EMPTY
+            self.evaluator.total_score = original_total_score
+            self.evaluator.line_values.update(original_line_values)
+
+            # Add depth-aware scoring to distinguish between wins/losses at different speeds
+            if abs(score) >= SCORE_TABLE["LIVE_FOUR"]["mine"]:
+                if score > 0:
+                    score -= 1  # Reward faster wins
+                else:
+                    score += 1  # Penalize faster losses
 
             if score > max_score:
                 max_score = score
@@ -678,12 +777,12 @@ class NegamaxAgent:
                 self.history_heuristic[move] += depth * depth
                 break
 
+        # Transposition table saving
         flag = "EXACT"
         if max_score <= original_alpha:
             flag = "UPPERBOUND"
         elif max_score >= beta:
             flag = "LOWERBOUND"
-
         existing_entry = self.transposition_table.get(board_hash)
         if not existing_entry or depth >= existing_entry["depth"]:
             self.transposition_table[board_hash] = {
@@ -697,27 +796,42 @@ class NegamaxAgent:
         return max_score, best_move
 
     def quiescence_search(self, alpha, beta, player, q_depth):
-        if time.time() - self.start_time > TIME_LIMIT:
-            raise TimeoutException()
+        # The stand_pat score is the score of the current board state
+        stand_pat_score = self.evaluator.get_current_score(player)
 
         if q_depth == 0:
-            return self.evaluate_board(player)
+            return stand_pat_score
 
-        stand_pat_score = self.evaluate_board(player)
         if stand_pat_score >= beta:
             return beta
         alpha = max(alpha, stand_pat_score)
 
-        moves = self._get_qsearch_moves(player)
+        moves = self._get_qsearch_moves(player)  # Only considers threatening moves
 
         for move in moves:
             r, c = move
+
+            # --- Incremental Update & Revert Logic ---
+            original_total_score = self.evaluator.total_score
+            original_line_values = {
+                line_id: self.evaluator.line_values[line_id]
+                for line_id in self.evaluator.square_to_lines[(r, c)]
+            }
+
+            self.evaluator.update_score(self.board, r, c, player)
             self.board[r, c] = player
+
             score = -self.quiescence_search(-beta, -alpha, 3 - player, q_depth - 1)
+
             self.board[r, c] = EMPTY
+            self.evaluator.total_score = original_total_score
+            self.evaluator.line_values.update(original_line_values)
+            # --- End of Logic ---
+
             if score >= beta:
                 return beta
             alpha = max(alpha, score)
+
         return alpha
 
     def _get_qsearch_moves(self, player):
@@ -818,6 +932,8 @@ class NegamaxAgent:
         best_move_so_far = None
         final_search_depth = 0
 
+        self.evaluator.full_recalc(self.board)
+
         joseki_move = self._get_next_joseki_move(player)
         if joseki_move:
             logger.info(
@@ -904,7 +1020,7 @@ def get_move():
         stone_count = np.count_nonzero(agent.board)
         agent.current_turn = stone_count + 1
         logger.info(
-            f"[Turn {agent.current_turn}] Received request for game_phase: {game_phase}, color_to_play: {color_to_play}"
+            f"Received request for game_phase: {game_phase}, color_to_play: {color_to_play}"
         )
 
         agent.board = np.array(board)
