@@ -540,7 +540,7 @@ class NegamaxAgent:
             return [(self.board_size // 2, self.board_size // 2)]
 
         moves = set()
-        radius = 4
+        radius = 2
         rows, cols = np.where(self.board != EMPTY)
         for r, c in zip(rows, cols):
             for i in range(-radius, radius + 1):
@@ -710,7 +710,12 @@ class NegamaxAgent:
 
         # Null-move pruning
         is_not_root_node = depth < self.current_search_depth
-        if depth >= 3 and np.any(self.board) and is_not_root_node:
+        if (
+            depth >= 3
+            and np.any(self.board)
+            and is_not_root_node
+            and beta < float("inf")
+        ):
             # When we do a null move, we don't change the board or the score
             score, _ = self.negamax(
                 depth - 3, -beta, -beta + 1, 3 - player, banned_moves_enabled
@@ -933,7 +938,11 @@ class NegamaxAgent:
                     f"[Turn {self.current_turn}] Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
                 )
 
-                if abs(score) >= SCORE_TABLE["FIVE"]["mine"] - MAX_DEPTH:
+                if (
+                    score != float("inf")
+                    and score != -float("inf")
+                    and abs(score) >= SCORE_TABLE["FIVE"]["mine"] - MAX_DEPTH
+                ):
                     logger.info("Terminal sequence found. Halting search.")
                     break
             except TimeoutException:
