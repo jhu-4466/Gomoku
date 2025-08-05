@@ -1347,13 +1347,21 @@ class GomokuApp(QMainWindow):
         self.agent_handler = None
 
     def prompt_new_game(self):
-        self.stop_game_loop()
+        game_was_running = (
+            self.game_engine.canvas.is_in_game and not self.game_engine.is_paused
+        )
+        if game_was_running:
+            self.game_engine.toggle_pause()
+
         dialog = NewGameDialog(self.agent_players_config, parent=self)
         if dialog.exec_():
+            self.stop_game_loop()
+
             self.game_settings = dialog.get_settings()
             num_games = self.game_settings.get("num_games", 1)
             left_is_human = self.game_settings["left_player"] == "Human"
             right_is_human = self.game_settings["right_player"] == "Human"
+
             if num_games > 1 and not left_is_human and not right_is_human:
                 self.is_batch_mode = True
                 self.batch_total_games = num_games
@@ -1363,6 +1371,9 @@ class GomokuApp(QMainWindow):
             else:
                 self.is_batch_mode = False
                 self.start_single_game()
+        else:
+            if game_was_running:
+                self.game_engine.toggle_pause()
 
     def start_single_game(self):
         self.setup_players_and_start()
