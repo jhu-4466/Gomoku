@@ -44,8 +44,8 @@ SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
     "LIVE_FOUR": {"mine": 100_000, "opp": 200_000},
     "DOUBLE_THREE": {"mine": 50_000, "opp": 150_000},
-    "RUSH_FOUR": {"mine": 30_000, "opp": 50_000},
-    "LIVE_THREE": {"mine": 15_000, "opp": 35_000},
+    "LIVE_THREE": {"mine": 20_000, "opp": 35_000},
+    "RUSH_FOUR": {"mine": 1_500, "opp": 5_000},
     "SLEEPY_THREE": {"mine": 800, "opp": 1500},
     "LIVE_TWO": {"mine": 500, "opp": 1000},
     "SLEEPY_TWO": {"mine": 100, "opp": 200},
@@ -477,33 +477,6 @@ class NegamaxAgent:
 
         return patterns
 
-    def _evaluate_global_potential(self, r, c, player):
-        # Value of opponent potential patterns
-        opponent = 3 - player
-        self.board[r, c] = opponent
-        opp_patterns_before = self._find_patterns_fast(opponent)
-        opp_potential = (
-            opp_patterns_before.get("LIVE_TWO", 0) * SCORE_TABLE["LIVE_TWO"]["opp"]
-            + opp_patterns_before.get("SLEEPY_THREE", 0)
-            * SCORE_TABLE["SLEEPY_THREE"]["opp"]
-            + opp_patterns_before.get("LIVE_THREE", 0)
-            * SCORE_TABLE["LIVE_THREE"]["opp"]
-        )
-        self.board[r, c] = EMPTY
-
-        # Value of our potential patterns
-        self.board[r, c] = player
-        my_new_patterns = self._find_patterns_fast(player)
-        my_potential = (
-            my_new_patterns.get("LIVE_TWO", 0) * SCORE_TABLE["LIVE_TWO"]["mine"]
-            + my_new_patterns.get("SLEEPY_THREE", 0)
-            * SCORE_TABLE["SLEEPY_THREE"]["mine"]
-            + my_new_patterns.get("LIVE_THREE", 0) * SCORE_TABLE["LIVE_THREE"]["mine"]
-        )
-        self.board[r, c] = EMPTY
-
-        return my_potential + opp_potential
-
     def _rate_move_statically(self, r, c, player):
         """
         Statically evaluate the threat of a single move for sorting purposes.
@@ -567,7 +540,7 @@ class NegamaxAgent:
             return [(self.board_size // 2, self.board_size // 2)]
 
         moves = set()
-        radius = 2
+        radius = 4
         rows, cols = np.where(self.board != EMPTY)
         for r, c in zip(rows, cols):
             for i in range(-radius, radius + 1):
