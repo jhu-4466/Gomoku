@@ -45,7 +45,7 @@ SCORE_TABLE = {
     "LIVE_FOUR": {"mine": 100_000, "opp": 200_000},
     "DOUBLE_THREE": {"mine": 50_000, "opp": 150_000},
     "LIVE_THREE": {"mine": 20_000, "opp": 35_000},
-    "RUSH_FOUR": {"mine": 1_500, "opp": 5_000},
+    "RUSH_FOUR": {"mine": 1000, "opp": 100_000},
     "SLEEPY_THREE": {"mine": 800, "opp": 1500},
     "LIVE_TWO": {"mine": 500, "opp": 1000},
     "SLEEPY_TWO": {"mine": 100, "opp": 200},
@@ -714,7 +714,7 @@ class NegamaxAgent:
             depth >= 3
             and np.any(self.board)
             and is_not_root_node
-            and beta < float("inf")
+            and beta != float("inf")
         ):
             # When we do a null move, we don't change the board or the score
             score, _ = self.negamax(
@@ -733,44 +733,38 @@ class NegamaxAgent:
 
         for i, move in enumerate(moves):
             r, c = move
-
-            # Store original scores before making a move to allow for perfect restoration
             original_total_score = self.evaluator.total_score
             original_line_values = {
                 line_id: self.evaluator.line_values[line_id]
-                for line_id in self.evaluator.square_to_lines[(r, c)]
+                for line_id in self.evaluator.square_to_lines.get((r, c), [])
             }
 
-            # Make the move and update the score incrementally
             self.evaluator.update_score(self.board, r, c, player)
             self.board[r, c] = player
 
             if self._check_win_by_move(r, c, player):
                 score = SCORE_TABLE["FIVE"]["mine"]
             else:
-                # Late Move Reduction / Extensions logic (no change needed here)
-                reduction = 0
-                extension = 0
-                if self._is_vcf_threat(move, player, banned_moves_enabled):
-                    extension = 1
-                if depth >= 3 and i >= 3 and extension == 0:
-                    reduction = 2
-
-                search_depth = depth - 1 + extension - reduction
-                if search_depth < 0:
-                    search_depth = 0
-
-                score, _ = self.negamax(
-                    search_depth, -beta, -alpha, 3 - player, banned_moves_enabled
-                )
-                score = -score
-
-                if reduction > 0 and score > alpha:
-                    re_search_depth = depth - 1 + extension
+                # The core PVS logic
+                if i == 0:
+                    # 1. Principal Variation) - full search
                     score, _ = self.negamax(
-                        re_search_depth, -beta, -alpha, 3 - player, banned_moves_enabled
+                        depth - 1, -beta, -alpha, 3 - player, banned_moves_enabled
                     )
                     score = -score
+                else:
+                    # 2. Other moves with quick "scout search" (zero-window search)(-alpha-1, -alpha)
+                    score, _ = self.negamax(
+                        depth - 1, -alpha - 1, -alpha, 3 - player, banned_moves_enabled
+                    )
+                    score = -score
+
+                    # 3. if score > alpha, do a full search again
+                    if alpha < score < beta:
+                        score, _ = self.negamax(
+                            depth - 1, -beta, -alpha, 3 - player, banned_moves_enabled
+                        )
+                        score = -score
 
             # 3. Undo the move and restore the score state EXACTLY
             self.board[r, c] = EMPTY
@@ -920,14 +914,34 @@ class NegamaxAgent:
         final_search_depth = 0
 
         self.evaluator.full_recalc(self.board)
+        last_score = self.evaluator.get_current_score(player)
 
         for depth in range(1, MAX_DEPTH + 1):
             try:
                 self.current_search_depth = depth
                 logger.info(f"--- Starting search at depth {depth} ---")
+
+                # Aspiration Windows - dynamically adjust the aspiration window
+                BASE_DELTA = SCORE_TABLE["SLEEPY_THREE"]["opp"]
+                FLEX_DELTA_RATIO = 0.20
+                aspiration_delta = BASE_DELTA + int(abs(last_score) * FLEX_DELTA_RATIO)
+                max_delta = SCORE_TABLE["LIVE_FOUR"]["mine"]  # 例如，上限为“活四”的分数
+                aspiration_delta = min(aspiration_delta, max_delta)
+
+                alpha = last_score - aspiration_delta
+                beta = last_score + aspiration_delta
+
                 score, move = self.negamax(
-                    depth, -float("inf"), float("inf"), player, banned_moves_enabled
+                    depth, alpha, beta, player, banned_moves_enabled
                 )
+                if score <= alpha or score >= beta:
+                    logger.warning(
+                        f"Aspiration search failed (score: {score}). Re-searching with full window."
+                    )
+                    score, move = self.negamax(
+                        depth, -float("inf"), float("inf"), player, banned_moves_enabled
+                    )
+                last_score = score
 
                 if move is not None:
                     best_move_so_far = move
