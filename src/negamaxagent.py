@@ -190,10 +190,10 @@ class IncrementalEvaluator:
             self.line_values[line_id] = new_line_score
             self.total_score += new_line_score
 
-    def get_current_score(self, player_to_move):
+    def get_current_score(self, color_to_play):
         # Returns the score from the perspective of the current player.
         # In our calculation, positive is good for Black, negative for White.
-        return self.total_score if player_to_move == BLACK else -self.total_score
+        return self.total_score if color_to_play == BLACK else -self.total_score
 
 
 class NegamaxAgent:
@@ -215,15 +215,14 @@ class NegamaxAgent:
         self.total_nodes_at_root = 0
 
         self.swap2_opening_sequence = []
-        self.joseki_book = None
-        self._load_joseki()
+        self.joseki_book = self._load_joseki()
 
     def _load_joseki(self, joseki_file="josekis.json"):
         """Loads the joseki book from a JSON file."""
         try:
             if os.path.exists(joseki_file):
                 with open(joseki_file, "r", encoding="utf-8") as f:
-                    self.joseki_book = json.load(f)
+                    return json.load(f)
                 logger.info(
                     f"Successfully loaded {len(self.joseki_book)} joseki patterns."
                 )
@@ -231,10 +230,91 @@ class NegamaxAgent:
                 logger.warning(
                     f"Joseki file '{joseki_file}' not found. Continuing without opening book."
                 )
-                self.joseki_book = None
+                return None
         except Exception as e:
             logger.error(f"Error loading joseki file: {e}")
-            self.joseki_book = None
+            return None
+
+    def find_opening_move(self, color_to_play):
+        if not self.joseki_book:
+            return None
+
+        # 1st stone
+        if self.current_turn == 1 and color_to_play == BLACK:
+            favorable_josekis = [j for j in self.joseki_book if j.get("trend") == 1]
+            if not favorable_josekis:
+                favorable_josekis = self.joseki_book
+
+            if favorable_josekis:
+                logger.info(
+                    "Turn 1: Choosing an opening from trend=1 (favorable for Black) josekis."
+                )
+                chosen_joseki = random.choice(favorable_josekis)
+                return chosen_joseki["joseki"][0][:2]
+
+        # 2nd stone
+        if self.current_turn == 2 and color_to_play == WHITE:
+            black_stone_pos = np.argwhere(self.board == BLACK)
+            if len(black_stone_pos) != 1:
+                return None
+            p1_move = black_stone_pos[0].tolist()
+
+            matching_josekis = [
+                j for j in self.joseki_book if j["joseki"][0][:2] == p1_move
+            ]
+            if not matching_josekis:
+                return None
+
+            preferred_josekis = [j for j in matching_josekis if j.get("trend") == 2]
+
+            if preferred_josekis:
+                logger.info(
+                    f"Turn 2: Found trend=2 (favorable for White) josekis. Responding."
+                )
+                chosen_joseki = random.choice(preferred_josekis)
+                return chosen_joseki["joseki"][1][:2]
+            else:
+                logger.info(
+                    f"Turn 2: No trend=2 josekis found. Falling back to any matched joseki."
+                )
+                chosen_joseki = random.choice(matching_josekis)
+                return chosen_joseki["joseki"][1][:2]
+
+        # 3rd stone
+        if self.current_turn == 3 and color_to_play == BLACK:
+            black_stones = np.argwhere(self.board == BLACK)
+            white_stones = np.argwhere(self.board == WHITE)
+            if len(black_stones) != 1 or len(white_stones) != 1:
+                return None
+
+            p1_move = black_stones[0].tolist()
+            p2_move = white_stones[0].tolist()
+
+            matching_josekis = [
+                j
+                for j in self.joseki_book
+                if j["joseki"][0][:2] == p1_move and j["joseki"][1][:2] == p2_move
+            ]
+            if not matching_josekis:
+                return None
+
+            # 优先选择对黑棋有利的(trend: 1)
+            preferred_josekis = [j for j in matching_josekis if j.get("trend") == 1]
+
+            if preferred_josekis:
+                logger.info(
+                    f"Turn 3: Found trend=1 (favorable for Black) josekis. Playing third move."
+                )
+                chosen_joseki = random.choice(preferred_josekis)
+                return chosen_joseki["joseki"][2][:2]
+            else:
+                logger.info(
+                    f"Turn 3: No trend=1 josekis found. Falling back to any matched joseki."
+                )
+                chosen_joseki = random.choice(matching_josekis)
+                return chosen_joseki["joseki"][2][:2]
+
+        return None
 
     def _compute_hash(self, player):
         h = np.uint64(0)
@@ -361,9 +441,9 @@ class NegamaxAgent:
                     break
         return threes, fours
 
-    def evaluate_board(self, player_to_move):
+    def evaluate_board(self, color_to_play):
         self.evaluator.full_recalc(self.board)
-        return self.evaluator.get_current_score(player_to_move)
+        return self.evaluator.get_current_score(color_to_play)
 
     def _find_patterns_fast(self, player):
         patterns = defaultdict(int)
@@ -852,39 +932,6 @@ class NegamaxAgent:
                 return True
         return False
 
-    def _has_threat(self, patterns):
-        threat_keywords = [
-            "LIVE_FOUR",
-            "RUSH_FOUR",
-            "LIVE_THREE",
-        ]
-
-        return any(patterns.get(k, 0) > 0 for k in threat_keywords)
-
-    def _get_next_joseki_move(self, player):
-        if not self.joseki_book or np.sum(self.board != EMPTY) >= 10:
-            return None
-
-        # Check if there are any immediate threats
-        self_patterns = self._find_patterns_fast(player)
-        opp_patterns = self._find_patterns_fast(3 - player)
-        if self._has_threat(self_patterns) or self._has_threat(opp_patterns):
-            return None
-
-        # otherwise move to the next joseki move
-        player_step_mod = 0 if player == BLACK else 1
-        preferred_trend = 1 if player == BLACK else 2
-        preferred_josekis = [
-            j for j in self.joseki_book if j["trend"] == preferred_trend
-        ]
-        for joseki in preferred_josekis:
-            for idx, move in enumerate(joseki["joseki"]):
-                r, c = move[:2]
-                if idx % 2 == player_step_mod and self.board[r, c] == EMPTY:
-                    return (r, c)
-
-        return None
-
     def find_best_move(self, board_state, player, banned_moves_enabled):
         self.board = np.array(board_state)
         self.start_time = time.time()
@@ -895,13 +942,6 @@ class NegamaxAgent:
         final_search_depth = 0
 
         self.evaluator.full_recalc(self.board)
-
-        joseki_move = self._get_next_joseki_move(player)
-        if joseki_move:
-            logger.info(
-                f"[Turn {self.current_turn}] Joseki move found: {joseki_move} for player {player}. Returning immediately."
-            )
-            return joseki_move, 0
 
         for depth in range(1, MAX_DEPTH + 1):
             try:
@@ -1011,34 +1051,9 @@ def get_move():
                 return jsonify({"move": move, "search_depth": 0})
         # Swap2: P2 chooses an action after P1 places 3 stones.
         elif game_phase == GamePhase.SWAP2_P2_CHOOSE_ACTION:
-            black_stones = np.argwhere(agent.board == BLACK)
-            white_stones = np.argwhere(agent.board == WHITE)
+            logger.info("Evaluating board to choose action for Swap2.")
 
-            if len(black_stones) == 2 and len(white_stones) == 1 and agent.joseki_book:
-                center_stone_idx_arr = np.where((black_stones == [7, 7]).all(axis=1))[0]
-
-                if center_stone_idx_arr.size > 0:
-                    center_stone_idx = center_stone_idx_arr[0]
-                    p1_first_move = black_stones[center_stone_idx].tolist()
-                    p1_third_move = black_stones[1 - center_stone_idx].tolist()
-                    p2_second_move = white_stones[0].tolist()
-
-                    for joseki in agent.joseki_book:
-                        if (
-                            joseki["joseki"][0][:2] == p1_first_move
-                            and joseki["joseki"][1][:2] == p2_second_move
-                            and joseki["joseki"][2][:2] == p1_third_move
-                        ):
-                            trend = joseki["trend"]
-                            choice = "TAKE_BLACK" if trend == 1 else "TAKE_WHITE"
-                            logger.info(
-                                f"Joseki recognized: '{joseki['name_cn']}'. Trend is {trend}. Choosing to {choice}."
-                            )
-                            return jsonify({"choice": choice})
-
-            logger.info("No joseki matched. Evaluating board to choose action.")
             score = agent.evaluate_board(BLACK)
-            # Thresholds for decision making can be tuned
             if score > SCORE_TABLE["LIVE_THREE"]["mine"]:
                 choice = "TAKE_BLACK"
             elif score < -SCORE_TABLE["LIVE_THREE"]["opp"]:
@@ -1058,6 +1073,19 @@ def get_move():
                 f"P1_CHOOSE_COLOR scores (B/W): {black_score}/{white_score}, Choice: {choice}"
             )
             return jsonify({"choice": choice})
+
+        # Joseki matching
+        opening_move = agent.find_opening_move(color_to_play)
+        if opening_move:
+            logger.info(
+                f"Normal Phase: Opening book move found: {opening_move}. Returning immediately."
+            )
+            return jsonify(
+                {
+                    "move": [int(opening_move[0]), int(opening_move[1])],
+                    "search_depth": 0,
+                }
+            )
 
         # --- Normal Search Logic and SWAP2_P2_PLACE_2 ---
         if color_to_play:
