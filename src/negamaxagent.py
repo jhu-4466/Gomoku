@@ -428,93 +428,49 @@ class NegamaxAgent:
         """
         Statically evaluate the threat of a single move for sorting purposes.
         """
-        score = 0
         opponent = 3 - player
+        total_score_change = 0
 
         # --- 1. Positional Bonus ---
         center = self.board_size // 2
         dist = max(abs(r - center), abs(c - center))
-        score += (center - dist) * SCORE_TABLE["POSITIONAL_BONUS_FACTOR"]
+        total_score_change += (center - dist) * SCORE_TABLE["POSITIONAL_BONUS_FACTOR"]
 
-        # --- 2. Offensive Check ---
-        my_offensive_score = 0
+        # --- 2. Calculate Offensive and Defensive score changes ---
+        affected_lines = self.evaluator.square_to_lines.get((r, c), [])
 
-        self.board[r, c] = player
-        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
-            line_chars = []
-            for i in range(-4, 5):
-                nr, nc = r + i * dr, c + i * dc
-                if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
-                    val = self.board[nr, nc]
-                    if val == player:
-                        line_chars.append("1")
-                    elif val == opponent:
-                        line_chars.append("2")
-                    else:
-                        line_chars.append("0")
-                else:
-                    line_chars.append("3")
-            line = "".join(line_chars)
+        for line_id in affected_lines:
+            squares = self.evaluator.lines[line_id]
 
-            if "011110" in line:
-                my_offensive_score += SCORE_TABLE["LIVE_FOUR"]["mine"]
-            if (
-                "211110" in line
-                or "011112" in line
-                or "10111" in line
-                or "11011" in line
-                or "11101" in line
-            ):
-                my_offensive_score += SCORE_TABLE["RUSH_FOUR"]["mine"]
-            if "01110" in line or "010110" in line:
-                my_offensive_score += SCORE_TABLE["LIVE_THREE"]["mine"]
-        score += my_offensive_score
-        self.board[r, c] = EMPTY
+            # A) Original line score before the move
+            line_str_before = "".join(
+                str(self.board[sq_r, sq_c]) for sq_r, sq_c in squares
+            )
+            score_before = self.evaluator._score_line(line_str_before)
 
-        # --- 3. Defensive Check ---
-        my_defensive_score = 0
+            # B) If I move here
+            line_str_mine = "".join(
+                str(player) if (sq_r, sq_c) == (r, c) else str(self.board[sq_r, sq_c])
+                for sq_r, sq_c in squares
+            )
+            score_after_mine = self.evaluator._score_line(line_str_mine)
+            # C) If opponent moves here
+            line_str_opp = "".join(
+                str(opponent) if (sq_r, sq_c) == (r, c) else str(self.board[sq_r, sq_c])
+                for sq_r, sq_c in squares
+            )
+            score_after_opp = self.evaluator._score_line(line_str_opp)
 
-        self.board[r, c] = opponent
-        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
-            line_chars = []
-            for i in range(-4, 5):
-                nr, nc = r + i * dr, c + i * dc
-                if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
-                    val = self.board[nr, nc]
-                    if val == opponent:
-                        line_chars.append("1")
-                    elif val == player:
-                        line_chars.append("2")
-                    else:
-                        line_chars.append("0")
-                else:
-                    line_chars.append("3")
-            line = "".join(line_chars)
+            my_gain = score_after_mine - score_before
+            opp_gain = score_after_opp - score_before
 
-            if "011110" in line:
-                my_defensive_score += SCORE_TABLE["LIVE_FOUR"]["opp"]
-            if (
-                "211110" in line
-                or "011112" in line
-                or "10111" in line
-                or "11011" in line
-                or "11101" in line
-            ):
-                my_defensive_score += SCORE_TABLE["RUSH_FOUR"]["opp"]
-            if "01110" in line or "010110" in line:
-                my_defensive_score += SCORE_TABLE["LIVE_THREE"]["opp"]
-        score += my_defensive_score
-        self.board[r, c] = EMPTY
+            perspective = 1 if player == BLACK else -1
+            total_score_change += my_gain * perspective
+            total_score_change += opp_gain * -perspective
 
-        # --- 4. Synergy Bonus ---
-        is_strong_offense = my_offensive_score >= SCORE_TABLE["LIVE_THREE"]["mine"]
-        is_strong_defense = my_defensive_score >= SCORE_TABLE["LIVE_THREE"]["opp"]
-        # The most synergistic move is blocking a major threat while creating one.
-        if is_strong_offense and is_strong_defense:
-            score += SCORE_TABLE["SYNERGY_BONUS"]["mine"]
+        total_score_change += self.history_heuristic.get((r, c), 0)
 
-        # score += self._evaluate_global_potential(r, c, player)
-        return score
+        return total_score_change
 
     def get_possible_moves(self, player, banned_moves_enabled, depth, hash_move):
         """
