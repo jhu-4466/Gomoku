@@ -55,6 +55,7 @@ COLOR_WHITE = (255, 255, 255)
 COLOR_LINE = (50, 50, 50)
 COLOR_BANNED = (255, 0, 0, 150)
 COLOR_HIGHLIGHT = (255, 50, 50)
+COLOR_MOVE_HIGHLIGHT = (255, 50, 50, 75)
 
 # Star points (15x15)
 STAR_POINTS = [
@@ -147,12 +148,23 @@ class GomokuCanvas(QWidget):
             self.banned_point_on_click = None
 
     def draw_highlight(self):
-        """Draws highlight lines for the last move."""
         if not self.last_move_coords:
             return
 
         row, col = self.last_move_coords
 
+        # --- Draw Highlight Square ---
+        center_pos = (
+            BOARD_MARGIN + col * CELL_SIZE,
+            BOARD_MARGIN + row * CELL_SIZE,
+        )
+        s = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
+        s.fill(COLOR_MOVE_HIGHLIGHT)
+        self.screen.blit(
+            s, (center_pos[0] - CELL_SIZE // 2, center_pos[1] - CELL_SIZE // 2)
+        )
+
+        # --- Draw Highlight Lines ---
         pygame.draw.line(
             self.screen,
             COLOR_HIGHLIGHT,
