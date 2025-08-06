@@ -445,6 +445,25 @@ class NegamaxAgent:
         self.evaluator.full_recalc(self.board)
         return self.evaluator.get_current_score(color_to_play)
 
+    def _evaluate_fast_positional(self, player):
+        score = 0
+        center = self.board_size // 2
+        bonus_factor = SCORE_TABLE["POSITIONAL_BONUS_FACTOR"]
+
+        # Get positions of all stones
+        black_stones = np.argwhere(self.board == BLACK)
+        white_stones = np.argwhere(self.board == WHITE)
+
+        for r, c in black_stones:
+            dist = max(abs(r - center), abs(c - center))
+            score += (center - dist) * bonus_factor
+
+        for r, c in white_stones:
+            dist = max(abs(r - center), abs(c - center))
+            score -= (center - dist) * bonus_factor
+
+        return score if player == BLACK else -score
+
     def _find_patterns_fast(self, player):
         patterns = defaultdict(int)
 
@@ -704,9 +723,17 @@ class NegamaxAgent:
                 return tt_entry["score"], tt_entry.get("move")
 
         if depth == 0:
-            # At leaf nodes, call quiescence search for tactical stability
-            q_score = self.quiescence_search(alpha, beta, player, q_depth=2)
-            return q_score, None
+            if self.current_search_depth >= 3:
+                fast_score = self._evaluate_fast_positional(player)
+                EVAL_MARGIN = SCORE_TABLE["LIVE_THREE"]["mine"]
+                if fast_score > alpha - EVAL_MARGIN and fast_score < beta + EVAL_MARGIN:
+                    q_score = self.quiescence_search(alpha, beta, player, q_depth=2)
+                    return q_score, None
+                else:
+                    return fast_score, None
+            else:
+                q_score = self.quiescence_search(alpha, beta, player, q_depth=2)
+                return q_score, None
 
         # Null-move pruning
         is_not_root_node = depth < self.current_search_depth
