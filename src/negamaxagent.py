@@ -45,11 +45,11 @@ SCORE_TABLE = {
     "LIVE_FOUR": {"mine": 100_000, "opp": 200_000},
     "DOUBLE_THREE": {"mine": 50_000, "opp": 150_000},
     "LIVE_THREE": {"mine": 20_000, "opp": 35_000},
-    "RUSH_FOUR": {"mine": 1000, "opp": 100_000},
-    "SLEEPY_THREE": {"mine": 800, "opp": 1500},
-    "LIVE_TWO": {"mine": 500, "opp": 1000},
+    "RUSH_FOUR": {"mine": 500, "opp": 100_000},
+    "SLEEPY_THREE": {"mine": 500, "opp": 1000},
+    "LIVE_TWO": {"mine": 1000, "opp": 2000},
     "SLEEPY_TWO": {"mine": 100, "opp": 200},
-    "SYNERGY_BONUS": {"mine": 3000, "opp": 3000},
+    "SYNERGY_BONUS": {"mine": 5000, "opp": 5000},
     "POSITIONAL_BONUS_FACTOR": 5,
 }
 PATTERNS_PLAYER = {
@@ -155,6 +155,56 @@ class IncrementalEvaluator:
             if count > 0:
                 score -= SCORE_TABLE[pattern_name]["opp"] * count
         return score
+
+    def _calculate_synergy_at(self, board, r, c, player):
+        opponent = 3 - player
+        offensive_threats = 0
+        defensive_blocks = 0
+        synergy_score = 0
+
+        affected_lines = self.square_to_lines.get((r, c), [])
+
+        # Temporarily modify the board to check outcomes
+        original_piece = board[r, c]
+        if original_piece != EMPTY:
+            return 0  # Should not happen on valid moves
+
+        for line_id in affected_lines:
+            squares = self.lines[line_id]
+
+            # --- 1. Check for Offensive Contribution ---
+            board[r, c] = player
+            line_str_mine = "".join(str(board[sq_r, sq_c]) for sq_r, sq_c in squares)
+            player_centric_str = line_str_mine.replace(str(opponent), "2").replace(
+                str(player), "1"
+            )
+            for pattern_regex in PATTERNS_PLAYER.values():
+                if pattern_regex.search(player_centric_str):
+                    offensive_threats += 1
+                    break
+
+            # --- 2. Check for Defensive Contribution (Blocking) ---
+            board[r, c] = opponent
+            line_str_opp = "".join(str(board[sq_r, sq_c]) for sq_r, sq_c in squares)
+            opponent_centric_str = line_str_opp.replace(str(player), "2").replace(
+                str(opponent), "1"
+            )
+            for pattern_regex in PATTERNS_PLAYER.values():
+                if pattern_regex.search(opponent_centric_str):
+                    defensive_blocks += 1
+                    break
+
+        board[r, c] = original_piece  # Revert board change
+
+        # --- 3. Award Synergy Bonus ---
+        is_offensive_synergy = offensive_threats >= 2
+        is_defensive_synergy = offensive_threats >= 1 and defensive_blocks >= 1
+        if is_offensive_synergy or is_defensive_synergy:
+            synergy_score += SCORE_TABLE["SYNERGY_BONUS"]["mine"]
+        if defensive_blocks >= 2:
+            synergy_score += SCORE_TABLE["SYNERGY_BONUS"]["opp"]
+
+        return synergy_score
 
     def full_recalc(self, board):
         # Calculates the score of the entire board from scratch.
@@ -500,46 +550,37 @@ class NegamaxAgent:
         """
         Statically evaluate the threat of a single move for sorting purposes.
         """
-        opponent = 3 - player
         total_score_change = 0
+        perspective = 1 if player == BLACK else -1
 
-        # --- 1. Positional Bonus ---
-        center = self.board_size // 2
-        dist = max(abs(r - center), abs(c - center))
-        total_score_change += (center - dist) * SCORE_TABLE["POSITIONAL_BONUS_FACTOR"]
+        # # --- 1. Positional Bonus ---
+        # center = self.board_size // 2
+        # dist = max(abs(r - center), abs(c - center))
+        # total_score_change += (center - dist) * SCORE_TABLE["POSITIONAL_BONUS_FACTOR"]
 
-        # --- 2. Calculate Offensive and Defensive score changes ---
+        # --- 2. Calculate direct score gain using the EFFICIENT incremental method ---
+        original_total_score = self.evaluator.total_score
         affected_lines = self.evaluator.square_to_lines.get((r, c), [])
+        original_line_values = {
+            line_id: self.evaluator.line_values[line_id] for line_id in affected_lines
+        }
 
-        for line_id in affected_lines:
-            squares = self.evaluator.lines[line_id]
+        # Perform incremental update
+        self.evaluator.update_score(self.board, r, c, player)
+        score_after_move = self.evaluator.total_score
+        # Calculate gain and then REVERT the state
+        my_gain = (score_after_move - original_total_score) * perspective
+        total_score_change += my_gain
 
-            # A) Original line score before the move
-            line_str_before = "".join(
-                str(self.board[sq_r, sq_c]) for sq_r, sq_c in squares
-            )
-            score_before = self.evaluator._score_line(line_str_before)
+        self.evaluator.total_score = original_total_score
+        self.evaluator.line_values.update(original_line_values)
 
-            # B) If I move here
-            line_str_mine = "".join(
-                str(player) if (sq_r, sq_c) == (r, c) else str(self.board[sq_r, sq_c])
-                for sq_r, sq_c in squares
-            )
-            score_after_mine = self.evaluator._score_line(line_str_mine)
-            # C) If opponent moves here
-            line_str_opp = "".join(
-                str(opponent) if (sq_r, sq_c) == (r, c) else str(self.board[sq_r, sq_c])
-                for sq_r, sq_c in squares
-            )
-            score_after_opp = self.evaluator._score_line(line_str_opp)
+        # --- 3. Calculate Synergy Bonus ---
+        total_score_change += self.evaluator._calculate_synergy_at(
+            self.board, r, c, player
+        )
 
-            my_gain = score_after_mine - score_before
-            opp_gain = score_after_opp - score_before
-
-            perspective = 1 if player == BLACK else -1
-            total_score_change += my_gain * perspective
-            total_score_change += opp_gain * -perspective
-
+        # --- 4. Add History Heuristic Score ---
         total_score_change += self.history_heuristic.get((r, c), 0)
 
         return total_score_change
