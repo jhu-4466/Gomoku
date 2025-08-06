@@ -16,7 +16,7 @@ import random
 if not os.path.exists("./logs"):
     os.makedirs("./logs")
 
-log_filename = f"./logs/negamax_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+log_filename = f"./logs/negamax_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -40,26 +40,25 @@ TOP_K_BY_DEPTH = [32, 28, 24, 20]
 The values for opponent's threats ('opp') are now significantly higher than 'mine'
 to force the AI to block critical threats instead of making risky offensive moves.
 """
+SYNERGY_FACTOR = 0.5
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
-    "LIVE_FOUR": {"mine": 100_000, "opp": 200_000},
-    "DOUBLE_THREE": {"mine": 50_000, "opp": 150_000},
-    "LIVE_THREE": {"mine": 20_000, "opp": 35_000},
-    "RUSH_FOUR": {"mine": 500, "opp": 100_000},
-    "SLEEPY_THREE": {"mine": 500, "opp": 1000},
-    "LIVE_TWO": {"mine": 1000, "opp": 2000},
-    "SLEEPY_TWO": {"mine": 100, "opp": 200},
-    "SYNERGY_BONUS": {"mine": 5000, "opp": 5000},
+    "LIVE_FOUR": {"mine": 80_000, "opp": 1_000_000},
+    "LIVE_THREE": {"mine": 8_000, "opp": 15_000},
+    "RUSH_FOUR": {"mine": 5_000, "opp": 10_000},
+    "SLEEPY_THREE": {"mine": 800, "opp": 2_000},
+    "LIVE_TWO": {"mine": 500, "opp": 1_000},
+    "SLEEPY_TWO": {"mine": 100, "opp": 150},
     "POSITIONAL_BONUS_FACTOR": 5,
 }
 PATTERNS_PLAYER = {
     "FIVE": re.compile(r"11111"),
     "LIVE_FOUR": re.compile(r"011110"),
     "RUSH_FOUR": re.compile(r"211110|011112|10111|11011|11101"),
-    "LIVE_THREE": re.compile(r"01110|010110"),
+    "LIVE_THREE": re.compile(r"01110|010110|011010"),
     "SLEEPY_THREE": re.compile(r"21110|01112|210110|011012|21101|10112"),
     "LIVE_TWO": re.compile(r"001100|01010|010010"),
-    "SLEEPY_TWO": re.compile(r"21100|00112|21010|01012|21001|10012"),
+    "SLEEPY_TWO": re.compile(r"21100|00112|21010|01012"),
 }
 
 # Zobrist hashing table for fast board state hashing
@@ -155,56 +154,6 @@ class IncrementalEvaluator:
             if count > 0:
                 score -= SCORE_TABLE[pattern_name]["opp"] * count
         return score
-
-    def _calculate_synergy_at(self, board, r, c, player):
-        opponent = 3 - player
-        offensive_threats = 0
-        defensive_blocks = 0
-        synergy_score = 0
-
-        affected_lines = self.square_to_lines.get((r, c), [])
-
-        # Temporarily modify the board to check outcomes
-        original_piece = board[r, c]
-        if original_piece != EMPTY:
-            return 0  # Should not happen on valid moves
-
-        for line_id in affected_lines:
-            squares = self.lines[line_id]
-
-            # --- 1. Check for Offensive Contribution ---
-            board[r, c] = player
-            line_str_mine = "".join(str(board[sq_r, sq_c]) for sq_r, sq_c in squares)
-            player_centric_str = line_str_mine.replace(str(opponent), "2").replace(
-                str(player), "1"
-            )
-            for pattern_regex in PATTERNS_PLAYER.values():
-                if pattern_regex.search(player_centric_str):
-                    offensive_threats += 1
-                    break
-
-            # --- 2. Check for Defensive Contribution (Blocking) ---
-            board[r, c] = opponent
-            line_str_opp = "".join(str(board[sq_r, sq_c]) for sq_r, sq_c in squares)
-            opponent_centric_str = line_str_opp.replace(str(player), "2").replace(
-                str(opponent), "1"
-            )
-            for pattern_regex in PATTERNS_PLAYER.values():
-                if pattern_regex.search(opponent_centric_str):
-                    defensive_blocks += 1
-                    break
-
-        board[r, c] = original_piece  # Revert board change
-
-        # --- 3. Award Synergy Bonus ---
-        is_offensive_synergy = offensive_threats >= 2
-        is_defensive_synergy = offensive_threats >= 1 and defensive_blocks >= 1
-        if is_offensive_synergy or is_defensive_synergy:
-            synergy_score += SCORE_TABLE["SYNERGY_BONUS"]["mine"]
-        if defensive_blocks >= 2:
-            synergy_score += SCORE_TABLE["SYNERGY_BONUS"]["opp"]
-
-        return synergy_score
 
     def full_recalc(self, board):
         # Calculates the score of the entire board from scratch.
@@ -376,6 +325,24 @@ class NegamaxAgent:
             h ^= zobrist_player_turn
         return h
 
+    def _check_forced_win(self, r, c, player):
+        if self.board[r, c] != EMPTY:
+            return False
+        self.board[r, c] = player
+        patterns = self._find_patterns_fast(player)
+        self.board[r, c] = EMPTY
+
+        if patterns.get("LIVE_FOUR", 0) >= 1:
+            return True
+        if patterns.get("RUSH_FOUR", 0) >= 2:
+            return True
+        if patterns.get("LIVE_THREE", 0) >= 2:
+            return True
+        if patterns.get("LIVE_THREE", 0) >= 1 and patterns.get("RUSH_FOUR", 0) >= 1:
+            return True
+
+        return False
+
     def _check_win_by_move(self, r, c, player):
         for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             count = 1
@@ -546,6 +513,67 @@ class NegamaxAgent:
 
         return patterns
 
+    def _calculate_synergy_at(self, r, c, player):
+        if self._check_forced_win(r, c, player):
+            return SCORE_TABLE["LIVE_FOUR"]["mine"]
+
+        opponent = 3 - player
+        offensive_patterns_found = []
+        defensive_patterns_found = []
+        synergy_score = 0
+
+        affected_lines = self.evaluator.square_to_lines.get((r, c), [])
+        original_piece = self.board[r, c]
+        if original_piece != EMPTY:
+            return 0
+
+        for line_id in affected_lines:
+            squares = self.evaluator.lines[line_id]
+            self.board[r, c] = player
+            line_str_mine = "".join(
+                str(self.board[sq_r, sq_c]) for sq_r, sq_c in squares
+            )
+            player_centric_str = line_str_mine.replace(str(opponent), "2").replace(
+                str(player), "1"
+            )
+            for name, regex in PATTERNS_PLAYER.items():
+                if regex.search(player_centric_str):
+                    offensive_patterns_found.append(name)
+                    break
+            self.board[r, c] = opponent
+            line_str_opp = "".join(
+                str(self.board[sq_r, sq_c]) for sq_r, sq_c in squares
+            )
+            opponent_centric_str = line_str_opp.replace(str(player), "2").replace(
+                str(opponent), "1"
+            )
+            for name, regex in PATTERNS_PLAYER.items():
+                if regex.search(opponent_centric_str):
+                    defensive_patterns_found.append(name)
+                    break
+        self.board[r, c] = original_piece
+
+        offensive_threat_count = len(offensive_patterns_found)
+        defensive_block_count = len(defensive_patterns_found)
+
+        if offensive_threat_count >= 2:
+            base_bonus_score = sum(
+                SCORE_TABLE[p]["mine"] for p in offensive_patterns_found
+            )
+            synergy_score += base_bonus_score * SYNERGY_FACTOR
+        if offensive_threat_count >= 1 and defensive_block_count >= 1:
+            base_bonus_score = sum(
+                SCORE_TABLE[p]["mine"] for p in offensive_patterns_found
+            ) + sum(SCORE_TABLE[p]["opp"] for p in defensive_patterns_found)
+            synergy_score += base_bonus_score * SYNERGY_FACTOR
+        if defensive_block_count >= 2:
+            base_bonus_score = sum(
+                SCORE_TABLE[p]["opp"] for p in defensive_patterns_found
+            )
+            synergy_score += base_bonus_score * SYNERGY_FACTOR
+
+        return synergy_score
+
     def _rate_move_statically(self, r, c, player):
         """
         Statically evaluate the threat of a single move for sorting purposes.
@@ -576,9 +604,7 @@ class NegamaxAgent:
         self.evaluator.line_values.update(original_line_values)
 
         # --- 3. Calculate Synergy Bonus ---
-        total_score_change += self.evaluator._calculate_synergy_at(
-            self.board, r, c, player
-        )
+        total_score_change += self._calculate_synergy_at(r, c, player)
 
         # --- 4. Add History Heuristic Score ---
         total_score_change += self.history_heuristic.get((r, c), 0)
@@ -598,7 +624,6 @@ class NegamaxAgent:
 
         if not np.any(self.board):
             return [(self.board_size // 2, self.board_size // 2)]
-
         moves = set()
         radius = 2
         rows, cols = np.where(self.board != EMPTY)
@@ -615,81 +640,44 @@ class NegamaxAgent:
                             if self._is_banned_move(nr, nc, player)[0]:
                                 continue
                         moves.add((nr, nc))
-
         if not moves:
             empty_cells = np.argwhere(self.board == EMPTY)
             return [tuple(cell) for cell in empty_cells]
 
         opponent = 3 - player
-
-        # --- Check for immediate winning moves ---
         my_win_moves = [m for m in moves if self._check_win_by_move(m[0], m[1], player)]
         opponent_win_moves = [
             m for m in moves if self._check_win_by_move(m[0], m[1], opponent)
         ]
+        my_urgent_attacks = [
+            m for m in moves if self._check_forced_win(m[0], m[1], player)
+        ]
+        opponent_urgent_defenses = [
+            m for m in moves if self._check_forced_win(m[0], m[1], opponent)
+        ]
 
-        # --- Urgent moves: Immediate threats ---
-        my_urgent_attacks = []
-        opponent_urgent_defenses = []
-        for r, c in moves:
-            self.board[r, c] = player
-            my_patterns = self._find_patterns_fast(player)
-            if (
-                my_patterns.get("LIVE_FOUR", 0) > 0
-                or my_patterns.get("LIVE_THREE", 0) >= 2
-            ):
-                my_urgent_attacks.append((r, c))
-            self.board[r, c] = EMPTY
-
-            self.board[r, c] = opponent
-            opp_patterns = self._find_patterns_fast(opponent)
-            if (
-                opp_patterns.get("LIVE_FOUR", 0) > 0
-                or opp_patterns.get("LIVE_THREE", 0) >= 2
-            ):
-                opponent_urgent_defenses.append((r, c))
-            self.board[r, c] = EMPTY
-
-        # --- Threat-based move ordering ---
-        move_scores = {
-            m: self._rate_move_statically(m[0], m[1], player)
-            + self.history_heuristic.get(m, 0)
-            for m in moves
-        }
-
+        move_scores = {m: self._rate_move_statically(m[0], m[1], player) for m in moves}
         sorted_moves = sorted(moves, key=lambda m: move_scores.get(m, 0), reverse=True)
 
         # --- Final prioritized list construction ---
         final_ordered_list = []
         # 1. Urgent: winning and threatening moves
         # (1) Winning moves
-        for move in my_win_moves:
-            if move not in final_ordered_list:
-                final_ordered_list.append(move)
         for move in opponent_win_moves:
             if move not in final_ordered_list:
                 final_ordered_list.append(move)
-        # (2) Live Four and Double Three moves
-        my_must_win_moves = []
-        opponent_must_defend_moves = []
-        for r, c in moves:
-            self.board[r, c] = player
-            patterns = self._find_patterns_fast(player)
-            if patterns.get("LIVE_FOUR", 0) > 0 or patterns.get("LIVE_THREE", 0) >= 2:
-                my_must_win_moves.append((r, c))
-            self.board[r, c] = EMPTY
-        for r, c in moves:
-            self.board[r, c] = opponent
-            patterns = self._find_patterns_fast(opponent)
-            if patterns.get("LIVE_FOUR", 0) > 0 or patterns.get("LIVE_THREE", 0) >= 2:
-                opponent_must_defend_moves.append((r, c))
-            self.board[r, c] = EMPTY
-        for move in opponent_must_defend_moves:
+        for move in my_win_moves:
             if move not in final_ordered_list:
                 final_ordered_list.append(move)
-        for move in my_must_win_moves:
+        # (2) Block opponent's major threats (Live Four, Double Three).
+        for move in opponent_urgent_defenses:
             if move not in final_ordered_list:
                 final_ordered_list.append(move)
+        # (3) Create our own major threats.
+        for move in my_urgent_attacks:
+            if move not in final_ordered_list:
+                final_ordered_list.append(move)
+
         # 2. Hash Move from Transposition Table
         if hash_move and hash_move in moves:
             final_ordered_list.append(hash_move)
