@@ -99,6 +99,7 @@ class GomokuCanvas(QWidget):
         )
         self.font_small = pygame.font.SysFont("sans", 20)
         self.font_large = pygame.font.SysFont("sans", 50)
+        self.font_coords = pygame.font.SysFont("sans", 16)
 
         # --- State variables ---
         self.board = [[0] * GRID_SIZE for _ in range(GRID_SIZE)]
@@ -536,6 +537,26 @@ class GomokuCanvas(QWidget):
                 6,
             )
 
+        # row and column labels
+        col_labels = [str(i + 1) for i in range(GRID_SIZE)]
+        row_labels = [str(i + 1) for i in range(GRID_SIZE)]
+
+        corner_label_surf = self.font_coords.render("1", True, COLOR_LINE)
+        corner_label_rect = corner_label_surf.get_rect()
+        corner_label_rect.center = (BOARD_MARGIN / 2, BOARD_MARGIN / 2)
+        self.screen.blit(corner_label_surf, corner_label_rect)
+        for i, label in enumerate(col_labels[1:], start=1):
+            text_surf = self.font_coords.render(label, True, COLOR_LINE)
+            text_rect = text_surf.get_rect()
+            text_rect.center = (BOARD_MARGIN + i * CELL_SIZE, BOARD_MARGIN / 2)
+            self.screen.blit(text_surf, text_rect)
+
+        for i, label in enumerate(row_labels[1:], start=1):
+            text_surf = self.font_coords.render(label, True, COLOR_LINE)
+            text_rect = text_surf.get_rect()
+            text_rect.center = (BOARD_MARGIN / 2, BOARD_MARGIN + i * CELL_SIZE)
+            self.screen.blit(text_surf, text_rect)
+
     def draw_pieces(self):
         for r in range(GRID_SIZE):
             for c in range(GRID_SIZE):
@@ -957,6 +978,7 @@ class ReplayCanvas(QWidget):
             (PYGAME_CANVAS_WIDTH, PYGAME_CANVAS_HEIGHT - INFO_BAR_HEIGHT),
             pygame.SRCALPHA,
         )
+        self.font_coords = pygame.font.SysFont("sans", 16)
 
     def set_board_state(self, board_state, last_move):
         """Updates the canvas with a new board state and last move."""
@@ -1028,6 +1050,26 @@ class ReplayCanvas(QWidget):
                 (BOARD_MARGIN + c * CELL_SIZE, BOARD_MARGIN + r * CELL_SIZE),
                 6,
             )
+
+        # row and column labels
+        col_labels = [str(i + 1) for i in range(GRID_SIZE)]
+        row_labels = [str(i + 1) for i in range(GRID_SIZE)]
+
+        corner_label_surf = self.font_coords.render("1", True, COLOR_LINE)
+        corner_label_rect = corner_label_surf.get_rect()
+        corner_label_rect.center = (BOARD_MARGIN / 2, BOARD_MARGIN / 2)
+        self.screen.blit(corner_label_surf, corner_label_rect)
+        for i, label in enumerate(col_labels[1:], start=1):
+            text_surf = self.font_coords.render(label, True, COLOR_LINE)
+            text_rect = text_surf.get_rect()
+            text_rect.center = (BOARD_MARGIN + i * CELL_SIZE, BOARD_MARGIN / 2)
+            self.screen.blit(text_surf, text_rect)
+
+        for i, label in enumerate(row_labels[1:], start=1):
+            text_surf = self.font_coords.render(label, True, COLOR_LINE)
+            text_rect = text_surf.get_rect()
+            text_rect.center = (BOARD_MARGIN / 2, BOARD_MARGIN + i * CELL_SIZE)
+            self.screen.blit(text_surf, text_rect)
 
     def draw_pieces(self):
         """Draws all the pieces on the board."""
