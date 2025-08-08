@@ -896,7 +896,6 @@ class NegamaxAgent:
             self.board[r, c] = EMPTY
             self.evaluator.total_score = original_total_score
             self.evaluator.line_values.update(original_line_values)
-            # --- End of Logic ---
 
             if score >= beta:
                 return beta
@@ -907,7 +906,8 @@ class NegamaxAgent:
     def _get_qsearch_moves(self, player):
         opponent = 3 - player
         threatening_moves = []
-        empty_cells = set()
+
+        candidate_moves = set()
         rows, cols = np.where(self.board != EMPTY)
         for r, c in zip(rows, cols):
             for i in range(-1, 2):
@@ -920,44 +920,36 @@ class NegamaxAgent:
                         and 0 <= nc < self.board_size
                         and self.board[nr, nc] == EMPTY
                     ):
-                        empty_cells.add((nr, nc))
+                        candidate_moves.add((nr, nc))
 
-        for r, c in empty_cells:
-            self.board[r, c] = player
-            if self._check_for_four(r, c, player):
+        for r, c in candidate_moves:
+            if self._is_tactical_threat(r, c, player) or self._is_tactical_threat(
+                r, c, opponent
+            ):
                 threatening_moves.append((r, c))
-            self.board[r, c] = EMPTY
 
-            self.board[r, c] = opponent
-            if self._check_for_four(r, c, opponent):
-                if (r, c) not in threatening_moves:
-                    threatening_moves.append((r, c))
-            self.board[r, c] = EMPTY
-        return threatening_moves
+        return list(set(threatening_moves))
 
-    def _check_for_four(self, r, c, player):
-        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
-            count = 1
-            for i in range(1, 4):
-                nr, nc = r + i * dr, c + i * dc
-                if not (
-                    0 <= nr < self.board_size
-                    and 0 <= nc < self.board_size
-                    and self.board[nr, nc] == player
-                ):
-                    break
-                count += 1
-            for i in range(1, 4):
-                nr, nc = r - i * dr, c - i * dc
-                if not (
-                    0 <= nr < self.board_size
-                    and 0 <= nc < self.board_size
-                    and self.board[nr, nc] == player
-                ):
-                    break
-                count += 1
-            if count >= 4:
-                return True
+    def _is_tactical_threat(self, r, c, player):
+        """
+        Checks if a move at (r, c) creates a significant tactical threat
+        (a four of any kind, or a live three).
+        """
+        if self.board[r, c] != EMPTY:
+            return False
+
+        self.board[r, c] = player
+        patterns = self._find_patterns_fast(player)
+        self.board[r, c] = EMPTY
+
+        # Any kind of "four" or a "live three" is considered a tactical threat
+        if (
+            patterns.get("LIVE_FOUR", 0) > 0
+            or patterns.get("RUSH_FOUR", 0) > 0
+            or patterns.get("LIVE_THREE", 0) > 0
+        ):
+            return True
+
         return False
 
     def find_best_move(self, board_state, player, banned_moves_enabled):
