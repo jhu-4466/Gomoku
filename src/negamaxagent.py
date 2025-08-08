@@ -44,8 +44,8 @@ SYNERGY_FACTOR = 0.5
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
     "LIVE_FOUR": {"mine": 80_000, "opp": 1_000_000},
-    "LIVE_THREE": {"mine": 8_000, "opp": 15_000},
-    "RUSH_FOUR": {"mine": 5_000, "opp": 10_000},
+    "LIVE_THREE": {"mine": 8_000, "opp": 50_000},
+    "RUSH_FOUR": {"mine": 5_000, "opp": 20_000},
     "SLEEPY_THREE": {"mine": 800, "opp": 2_000},
     "LIVE_TWO": {"mine": 500, "opp": 1_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 150},
@@ -645,53 +645,50 @@ class NegamaxAgent:
             return [tuple(cell) for cell in empty_cells]
 
         opponent = 3 - player
+        # Prioritized lists
         my_win_moves = [m for m in moves if self._check_win_by_move(m[0], m[1], player)]
+        if my_win_moves:
+            return my_win_moves  # If I can win, do it immediately.
         opponent_win_moves = [
             m for m in moves if self._check_win_by_move(m[0], m[1], opponent)
         ]
+        if opponent_win_moves:
+            return opponent_win_moves  # Block opponent's immediate win.
+
+        final_ordered_list = []
+        # 2nd Priority: Check for forced wins or major threats
         my_urgent_attacks = [
             m for m in moves if self._check_forced_win(m[0], m[1], player)
         ]
         opponent_urgent_defenses = [
             m for m in moves if self._check_forced_win(m[0], m[1], opponent)
         ]
-
-        move_scores = {m: self._rate_move_statically(m[0], m[1], player) for m in moves}
-        sorted_moves = sorted(moves, key=lambda m: move_scores.get(m, 0), reverse=True)
-
-        # --- Final prioritized list construction ---
-        final_ordered_list = []
-        # 1. Urgent: winning and threatening moves
-        # (1) Winning moves
-        for move in opponent_win_moves:
-            if move not in final_ordered_list:
-                final_ordered_list.append(move)
-        for move in my_win_moves:
-            if move not in final_ordered_list:
-                final_ordered_list.append(move)
-        # (2) Block opponent's major threats (Live Four, Double Three).
+        # 1. Block opponent's major threats
         for move in opponent_urgent_defenses:
             if move not in final_ordered_list:
                 final_ordered_list.append(move)
-        # (3) Create our own major threats.
+        # 2. Create our own major threats
         for move in my_urgent_attacks:
             if move not in final_ordered_list:
                 final_ordered_list.append(move)
 
-        # 2. Hash Move from Transposition Table
+        move_scores = {m: self._rate_move_statically(m[0], m[1], player) for m in moves}
+        sorted_moves = sorted(moves, key=lambda m: move_scores.get(m, 0), reverse=True)
+
+        # Hash Move from Transposition Table
         if hash_move and hash_move in moves:
             final_ordered_list.append(hash_move)
-        # 3. Killer Moves
+        # Killer Moves
         killers = self.killer_moves[depth]
         if killers[0] and killers[0] in moves and killers[0] not in final_ordered_list:
             final_ordered_list.append(killers[0])
         if killers[1] and killers[1] in moves and killers[1] not in final_ordered_list:
             final_ordered_list.append(killers[1])
-        # 4. All other moves, sorted by threat+history
+        # All other moves, sorted by threat+history
         for move in sorted_moves:
             if move not in final_ordered_list:
                 final_ordered_list.append(move)
-        # 5. Top-K Move Pruning to reduce the branching factor.
+        # Top-K Move Pruning to reduce the branching factor.
         if depth > 0:
             absolute_depth = self.current_search_depth - depth
             if absolute_depth < 0:
