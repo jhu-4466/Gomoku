@@ -613,95 +613,125 @@ class NegamaxAgent:
         if tt_entry and "sorted_moves" in tt_entry:
             return tt_entry["sorted_moves"]
 
-        if not np.any(self.board):
-            return [(self.board_size // 2, self.board_size // 2)]
-        moves = set()
-        radius = 2
-        rows, cols = np.where(self.board != EMPTY)
-        for r, c in zip(rows, cols):
-            for i in range(-radius, radius + 1):
-                for j in range(-radius, radius + 1):
-                    nr, nc = r + i, c + j
-                    if (
-                        0 <= nr < self.board_size
-                        and 0 <= nc < self.board_size
-                        and self.board[nr, nc] == EMPTY
-                    ):
-                        if banned_moves_enabled and player == BLACK:
-                            if self._is_banned_move(nr, nc, player)[0]:
-                                continue
-                        moves.add((nr, nc))
-        if not moves:
-            empty_cells = np.argwhere(self.board == EMPTY)
-            return [tuple(cell) for cell in empty_cells]
-
+        moves = self._get_candidate_moves(player, banned_moves_enabled)
         opponent = 3 - player
-        # Prioritized lists
-        my_win_moves = [m for m in moves if self._check_win_by_move(m[0], m[1], player)]
-        if my_win_moves:
-            return my_win_moves  # If I can win, do it immediately.
-        opponent_win_moves = [
-            m for m in moves if self._check_win_by_move(m[0], m[1], opponent)
-        ]
-        if opponent_win_moves:
-            return opponent_win_moves  # Block opponent's immediate win.
+        urgent_defenses = []
+        urgent_attacks = []
+        hash_moves = []
+        killer_moves_list = []
+        regular_moves = []
 
-        final_ordered_list = []
-        # 2nd Priority: Check for forced wins or major threats
-        my_urgent_attacks = [
-            m for m in moves if self._check_forced_win(m[0], m[1], player)
-        ]
-        opponent_urgent_defenses = [
-            m for m in moves if self._check_forced_win(m[0], m[1], opponent)
-        ]
-        # 1. Block opponent's major threats
-        for move in opponent_urgent_defenses:
-            if move not in final_ordered_list:
-                final_ordered_list.append(move)
-        # 2. Create our own major threats
-        for move in my_urgent_attacks:
-            if move not in final_ordered_list:
-                final_ordered_list.append(move)
+        for move in moves:
+            r, c = move
+            if self._is_vcf_threat(r, c, opponent):
+                urgent_defenses.append(move)
+            elif self._is_vcf_threat(r, c, player):
+                urgent_attacks.append(move)
+            else:
+                regular_moves.append(move)
 
-        move_scores = {m: self._rate_move_statically(m[0], m[1], player) for m in moves}
-        sorted_moves = sorted(moves, key=lambda m: move_scores.get(m, 0), reverse=True)
-
-        # Hash Move from Transposition Table
+        # Hash Moves
         if hash_move and hash_move in moves:
-            final_ordered_list.append(hash_move)
+            if hash_move not in urgent_defenses and hash_move not in urgent_attacks:
+                hash_moves.append(hash_move)
+                if hash_move in regular_moves:
+                    regular_moves.remove(hash_move)
+
         # Killer Moves
         killers = self.killer_moves[depth]
-        if killers[0] and killers[0] in moves and killers[0] not in final_ordered_list:
-            final_ordered_list.append(killers[0])
-        if killers[1] and killers[1] in moves and killers[1] not in final_ordered_list:
-            final_ordered_list.append(killers[1])
-        # All other moves, sorted by threat+history
-        for move in sorted_moves:
-            if move not in final_ordered_list:
-                final_ordered_list.append(move)
-        # Top-K Move Pruning to reduce the branching factor.
-        if depth > 0:
+        for killer in [killers[0], killers[1]]:
+            if (
+                killer
+                and killer in moves
+                and killer not in urgent_defenses
+                and killer not in urgent_attacks
+                and killer not in hash_moves
+            ):
+                killer_moves_list.append(killer)
+                if killer in regular_moves:
+                    regular_moves.remove(killer)
+
+        # Regular Moves + static scoring
+        if regular_moves:
+            move_scores = {
+                m: self._rate_move_statically(m[0], m[1], player) for m in regular_moves
+            }
+            regular_moves.sort(key=lambda m: move_scores[m], reverse=True)
+
+        final_ordered_list = []
+        final_ordered_list.extend(urgent_defenses)
+        final_ordered_list.extend(urgent_attacks)
+        final_ordered_list.extend(hash_moves)
+        final_ordered_list.extend(killer_moves_list)
+        final_ordered_list.extend(regular_moves)
+
+        if depth > 0 and len(final_ordered_list) > 1:
             absolute_depth = self.current_search_depth - depth
             if absolute_depth < 0:
                 absolute_depth = 0
 
-            if move_scores:
-                eval_spread = max(move_scores.values()) - min(move_scores.values())
-                if eval_spread > 20000:  # Just a magic number
-                    top_k = max(
-                        8,
-                        TOP_K_BY_DEPTH[min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)]
-                        // 2,
-                    )
+            if regular_moves:
+                move_scores = {
+                    m: self._rate_move_statically(m[0], m[1], player)
+                    for m in regular_moves
+                }
+                if move_scores:
+                    eval_spread = max(move_scores.values()) - min(move_scores.values())
+                    if eval_spread > 20000:
+                        base_top_k = (
+                            TOP_K_BY_DEPTH[min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)]
+                            // 2
+                        )
+                    else:
+                        base_top_k = TOP_K_BY_DEPTH[
+                            min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)
+                        ]
                 else:
-                    top_k = TOP_K_BY_DEPTH[min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)]
+                    base_top_k = TOP_K_BY_DEPTH[
+                        min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)
+                    ]
             else:
-                top_k = TOP_K_BY_DEPTH[min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)]
+                base_top_k = TOP_K_BY_DEPTH[
+                    min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)
+                ]
+
+            critical_moves_count = len(urgent_defenses) + len(urgent_attacks)
+            top_k = max(8, base_top_k, critical_moves_count + 2)
 
             if len(final_ordered_list) > top_k:
-                return final_ordered_list[:top_k]
+                final_ordered_list = final_ordered_list[:top_k]
 
         return final_ordered_list
+
+    def _find_live_three_ends(self, player):
+        completion_moves = set()
+
+        live_three_regex = PATTERNS_PLAYER["LIVE_THREE"]
+
+        for line_id, squares in self.evaluator.lines.items():
+            line_str_raw = "".join(str(self.board[r, c]) for r, c in squares)
+            if player == BLACK:
+                line_str = line_str_raw
+            else:
+                line_str = (
+                    line_str_raw.replace("1", "T").replace("2", "1").replace("T", "2")
+                )
+
+            for match in live_three_regex.finditer(line_str):
+                matched_pattern = match.group(0)
+                start_index = match.start()
+
+                if matched_pattern == "01110":
+                    completion_moves.add(squares[start_index])
+                    completion_moves.add(squares[start_index + 4])
+                elif matched_pattern == "010110":
+                    # For _X_XX_, the key empty cell is at relative position 2.
+                    completion_moves.add(squares[start_index + 2])
+                elif matched_pattern == "011010":
+                    # For _XX_X_, the key empty cell is at relative position 3.
+                    completion_moves.add(squares[start_index + 3])
+
+        return list(completion_moves)
 
     def _is_vcf_threat(self, r, c, player):
         if self.board[r, c] != EMPTY:
@@ -946,6 +976,37 @@ class NegamaxAgent:
 
         return False
 
+    def _get_candidate_moves(self, player, banned_moves_enabled):
+        """
+        Generates a set of plausible moves around existing stones.
+        """
+        if not np.any(self.board):
+            return [(self.board_size // 2, self.board_size // 2)]
+
+        moves = set()
+        radius = 2  # Search radius around existing stones
+        rows, cols = np.where(self.board != EMPTY)
+
+        for r, c in zip(rows, cols):
+            for i in range(-radius, radius + 1):
+                for j in range(-radius, radius + 1):
+                    nr, nc = r + i, c + j
+                    if (
+                        0 <= nr < self.board_size
+                        and 0 <= nc < self.board_size
+                        and self.board[nr, nc] == EMPTY
+                    ):
+                        if banned_moves_enabled and player == BLACK:
+                            if self._is_banned_move(nr, nc, player)[0]:
+                                continue
+                        moves.add((nr, nc))
+
+        if not moves:  # If board is full except for a few spots
+            empty_cells = np.argwhere(self.board == EMPTY)
+            return [tuple(cell) for cell in empty_cells]
+
+        return list(moves)
+
     def find_best_move(self, board_state, player, banned_moves_enabled):
         self.board = np.array(board_state)
         self.start_time = time.time()
@@ -955,6 +1016,53 @@ class NegamaxAgent:
         best_move_so_far = None
         final_search_depth = 0
 
+        # 1st Priority: Check for immediate win
+        candidate_moves = self._get_candidate_moves(player, banned_moves_enabled)
+        my_win_moves = [
+            m for m in candidate_moves if self._check_win_by_move(m[0], m[1], player)
+        ]
+        if my_win_moves:
+            logger.info(
+                f"High-level rule: Found immediate win at {my_win_moves[0]}. Skipping search."
+            )
+            return my_win_moves[0], 0  # Return move, depth=0
+        opponent = 3 - player
+        opponent_win_moves = [
+            m for m in candidate_moves if self._check_win_by_move(m[0], m[1], opponent)
+        ]
+        if opponent_win_moves:
+            logger.info(
+                f"High-level rule: Blocking opponent's win at {opponent_win_moves[0]}. Skipping search."
+            )
+            return opponent_win_moves[0], 0
+
+        # EXCEPTION: forcedly LIVE_THREE-> LIVE_FOUR(offensive) or SLEEPY_THREE(defense)
+        live_three_completion_moves = self._find_live_three_ends(player)
+        valid_completion_moves = [
+            m for m in live_three_completion_moves if m in candidate_moves
+        ]
+        if valid_completion_moves:
+            chosen_move = None
+            if len(valid_completion_moves) == 1:
+                # If there's only one way to complete the three, take it.
+                chosen_move = valid_completion_moves[0]
+            else:
+                # If there are two endpoints, evaluate which one is better.
+                logger.info(
+                    f"High-level rule: Evaluating {len(valid_completion_moves)} LIVE_THREE endpoints."
+                )
+                move_scores = {
+                    m: self._rate_move_statically(m[0], m[1], player)
+                    for m in valid_completion_moves
+                }
+                chosen_move = max(move_scores, key=move_scores.get)
+
+            logger.info(
+                f"High-level rule: Found LIVE_THREE. Choosing best endpoint {chosen_move} from {valid_completion_moves}. Skipping search."
+            )
+            return chosen_move, 0
+
+        # Normal search
         for depth in range(1, MAX_DEPTH + 1):
             try:
                 self.current_search_depth = depth
