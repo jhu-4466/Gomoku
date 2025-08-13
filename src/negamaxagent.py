@@ -32,7 +32,6 @@ BLACK = 1
 WHITE = 2
 TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
 MAX_DEPTH = 50  # Max search depth for IDDFS
-MIN_DEPTH = 3  # The minimum depth the AI must complete, regardless of time.
 TOP_K_BY_DEPTH = [16, 12, 10, 8]
 
 
@@ -44,8 +43,8 @@ SYNERGY_FACTOR = 0.5
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
     "LIVE_FOUR": {"mine": 80_000, "opp": 1_000_000},
-    "LIVE_THREE": {"mine": 15_000, "opp": 60_000},
-    "RUSH_FOUR": {"mine": 6_000, "opp": 18_000},
+    "LIVE_THREE": {"mine": 15_000, "opp": 100_000},
+    "RUSH_FOUR": {"mine": 6_000, "opp": 20_000},
     "SLEEPY_THREE": {"mine": 1_500, "opp": 3_000},
     "LIVE_TWO": {"mine": 1_500, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 150},
@@ -215,6 +214,10 @@ class NegamaxAgent:
 
         self.swap2_opening_sequence = []
         self.joseki_book = self._load_joseki()
+
+        # Timeout
+        self.safety_buffer = 0.2
+        self.max_search_time = TIME_LIMIT - self.safety_buffer
 
     def _load_joseki(self, joseki_file="josekis.json"):
         """Loads the joseki book from a JSON file."""
@@ -727,8 +730,7 @@ class NegamaxAgent:
         return False
 
     def negamax(self, depth, alpha, beta, player, banned_moves_enabled):
-        if time.time() - self.start_time > TIME_LIMIT:
-            raise TimeoutException()
+        self._check_timeout()
 
         original_alpha = alpha
         board_hash = self._compute_hash(player)
@@ -785,6 +787,8 @@ class NegamaxAgent:
             return 0, None
 
         for i, move in enumerate(moves):
+            self._check_timeout()
+
             r, c = move
             original_total_score = self.evaluator.total_score
             original_line_values = {
@@ -863,6 +867,8 @@ class NegamaxAgent:
         return max_score, best_move
 
     def quiescence_search(self, alpha, beta, player, q_depth):
+        self._check_timeout()
+
         # The stand_pat score is the score of the current board state
         stand_pat_score = self.evaluator.get_current_score(player)
 
@@ -876,6 +882,8 @@ class NegamaxAgent:
         moves = self._get_qsearch_moves(player)  # Only considers threatening moves
 
         for move in moves:
+            self._check_timeout()
+
             r, c = move
 
             # --- Incremental Update & Revert Logic ---
@@ -959,8 +967,6 @@ class NegamaxAgent:
         final_search_depth = 0
 
         self.evaluator.full_recalc(self.board)
-        last_score = self.evaluator.get_current_score(player)
-
         for depth in range(1, MAX_DEPTH + 1):
             try:
                 self.current_search_depth = depth
@@ -1021,6 +1027,10 @@ class NegamaxAgent:
         """
         self.transposition_table.clear()
         logger.info("New game signal received. Transposition table has been cleared.")
+
+    def _check_timeout(self):
+        if time.time() - self.start_time > self.max_search_time:
+            raise TimeoutException()
 
 
 # --- Flask HTTP Server ---
