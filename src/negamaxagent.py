@@ -730,21 +730,6 @@ class NegamaxAgent:
 
         return list(completion_moves)
 
-    def _is_vcf_threat(self, r, c, player):
-        if self.board[r, c] != EMPTY:
-            return False
-        self.board[r, c] = player
-        patterns = self._find_patterns(player)
-        self.board[r, c] = EMPTY
-
-        if patterns.get("LIVE_FOUR", 0) >= 1:
-            return True
-        if patterns.get("RUSH_FOUR", 0) >= 1:
-            return True
-        if patterns.get("LIVE_THREE", 0) >= 1:
-            return True
-        return False
-
     def negamax(self, depth, alpha, beta, player, banned_moves_enabled):
         self._check_timeout()
 
@@ -943,33 +928,24 @@ class NegamaxAgent:
                         candidate_moves.add((nr, nc))
 
         for r, c in candidate_moves:
-            if self._is_tactical_threat(r, c, player) or self._is_tactical_threat(
-                r, c, opponent
-            ):
+            if self._is_vcf_threat(r, c, player) or self._is_vcf_threat(r, c, opponent):
                 threatening_moves.append((r, c))
 
         return list(set(threatening_moves))
 
-    def _is_tactical_threat(self, r, c, player):
-        """
-        Checks if a move at (r, c) creates a significant tactical threat
-        (a four of any kind, or a live three).
-        """
+    def _is_vcf_threat(self, r, c, player):
         if self.board[r, c] != EMPTY:
             return False
-
         self.board[r, c] = player
         patterns = self._find_patterns(player)
         self.board[r, c] = EMPTY
 
-        # Any kind of "four" or a "live three" is considered a tactical threat
-        if (
-            patterns.get("LIVE_FOUR", 0) > 0
-            or patterns.get("RUSH_FOUR", 0) > 0
-            or patterns.get("LIVE_THREE", 0) > 0
-        ):
+        if patterns.get("LIVE_FOUR", 0) >= 1:
             return True
-
+        if patterns.get("RUSH_FOUR", 0) >= 1:
+            return True
+        if patterns.get("LIVE_THREE", 0) >= 1:
+            return True
         return False
 
     def _get_candidate_moves(self, player, banned_moves_enabled):
