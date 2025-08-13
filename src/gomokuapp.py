@@ -481,7 +481,7 @@ class GomokuCanvas(QWidget):
                     count += 1
                 else:
                     break
-            if count == 5:
+            if count >= 5:
                 return True
         return False
 
