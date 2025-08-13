@@ -13,16 +13,42 @@ import random
 
 
 # --- Logging Setup ---
-if not os.path.exists("./logs"):
-    os.makedirs("./logs")
+class GameLogger:
+    def __init__(self, logs_dir="./logs"):
+        self.logs_dir = logs_dir
+        self.current_game_id = None
+        self.logger = None
+        self.handler = None
 
-log_filename = f"./logs/negamax_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(log_filename)],  # , logging.StreamHandler()
-)
-logger = logging.getLogger(__name__)
+        if not os.path.exists(self.logs_dir):
+            os.makedirs(self.logs_dir)
+
+    def start_new_game(self):
+        if self.handler and self.logger:
+            self.logger.removeHandler(self.handler)
+            self.handler.close()
+
+        self.current_game_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = f"{self.logs_dir}/gamelog_{self.current_game_id}.json"
+        self.logger = logging.getLogger(f"gamelog_{self.current_game_id}")
+        self.logger.setLevel(logging.INFO)
+
+        self.logger.handlers.clear()
+
+        self.handler = logging.FileHandler(log_filename, encoding="utf-8")
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        self.handler.setFormatter(formatter)
+        self.logger.addHandler(self.handler)
+
+        self.logger.info(f"=== Game {self.current_game_id} Started ===")
+
+    def get_logger(self):
+        if not self.logger:
+            self.start_new_game()
+        return self.logger
+
+
+game_logger = GameLogger()
 
 
 # --- Configuration ---
@@ -455,25 +481,6 @@ class NegamaxAgent:
         self.evaluator.full_recalc(self.board)
         return self.evaluator.get_current_score(color_to_play)
 
-    def _evaluate_fast_positional(self, player):
-        score = 0
-        center = self.board_size // 2
-        bonus_factor = SCORE_TABLE["POSITIONAL_BONUS_FACTOR"]
-
-        # Get positions of all stones
-        black_stones = np.argwhere(self.board == BLACK)
-        white_stones = np.argwhere(self.board == WHITE)
-
-        for r, c in black_stones:
-            dist = max(abs(r - center), abs(c - center))
-            score += (center - dist) * bonus_factor
-
-        for r, c in white_stones:
-            dist = max(abs(r - center), abs(c - center))
-            score -= (center - dist) * bonus_factor
-
-        return score if player == BLACK else -score
-
     def _find_patterns(self, player):
         patterns = defaultdict(int)
 
@@ -733,6 +740,10 @@ class NegamaxAgent:
     def negamax(self, depth, alpha, beta, player, banned_moves_enabled):
         self._check_timeout()
 
+        if depth <= 0:
+            q_score = self.quiescence_search(alpha, beta, player, q_depth=1)
+            return q_score, None
+
         original_alpha = alpha
         board_hash = self._compute_hash(player)
         tt_entry = self.transposition_table.get(board_hash)
@@ -751,27 +762,9 @@ class NegamaxAgent:
             if alpha >= beta:
                 return tt_entry["score"], tt_entry.get("move")
 
-        if depth == 0:
-            if self.current_search_depth >= 3:
-                fast_score = self._evaluate_fast_positional(player)
-                EVAL_MARGIN = SCORE_TABLE["LIVE_THREE"]["mine"]
-                if fast_score > alpha - EVAL_MARGIN and fast_score < beta + EVAL_MARGIN:
-                    q_score = self.quiescence_search(alpha, beta, player, q_depth=2)
-                    return q_score, None
-                else:
-                    return fast_score, None
-            else:
-                q_score = self.quiescence_search(alpha, beta, player, q_depth=2)
-                return q_score, None
-
         # Null-move pruning
         is_not_root_node = depth < self.current_search_depth
-        if (
-            depth >= 3
-            and np.any(self.board)
-            and is_not_root_node
-            and beta != float("inf")
-        ):
+        if depth >= 3 and is_not_root_node and beta != float("inf"):
             # When we do a null move, we don't change the board or the score
             score, _ = self.negamax(
                 depth - 3, -beta, -beta + 1, 3 - player, banned_moves_enabled
@@ -945,6 +938,8 @@ class NegamaxAgent:
         if patterns.get("RUSH_FOUR", 0) >= 1:
             return True
         if patterns.get("LIVE_THREE", 0) >= 1:
+            return True
+        if patterns.get("LIVE_THREE", 0) >= 1 and patterns.get("RUSH_FOUR", 0) >= 1:
             return True
         return False
 
@@ -1183,6 +1178,10 @@ class NegamaxAgent:
         Resets the agent's state for a new game.
         Clears the transposition table, history heuristic, and killer moves.
         """
+        global logger, game_logger
+        game_logger.start_new_game()
+        logger = game_logger.get_logger()
+
         self.transposition_table.clear()
         self.evaluator.full_recalc(self.board)
         logger.info("New game signal received. Transposition table has been cleared.")
@@ -1211,6 +1210,9 @@ def get_move():
         """
         Logs
         """
+        global logger
+        if not logger:
+            logger = game_logger.get_logger()
         agent.board = np.array(board)
         stone_count = np.count_nonzero(agent.board)
         agent.current_turn = stone_count + 1
