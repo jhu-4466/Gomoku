@@ -1013,6 +1013,19 @@ class ReplayCanvas(QWidget):
         if not self.last_move_coords:
             return
         row, col = self.last_move_coords
+
+        # --- Draw Highlight Square ---
+        center_pos = (
+            BOARD_MARGIN + col * CELL_SIZE,
+            BOARD_MARGIN + row * CELL_SIZE,
+        )
+        s = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
+        s.fill(COLOR_MOVE_HIGHLIGHT)
+        self.screen.blit(
+            s, (center_pos[0] - CELL_SIZE // 2, center_pos[1] - CELL_SIZE // 2)
+        )
+
+        # --- Draw Highlight Lines ---
         pygame.draw.line(
             self.screen,
             COLOR_HIGHLIGHT,
