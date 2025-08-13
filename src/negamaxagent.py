@@ -166,24 +166,19 @@ class IncrementalEvaluator:
             for r, c in squares:
                 self.square_to_lines[(r, c)].append(line_id)
 
-    def _score_line(self, line_str, color_to_play=BLACK):
+    def _score_line(self, line_str):
         # Scores a single line string based on patterns
         score = 0
-        opponent = 3 - color_to_play
 
-        my_board = line_str.replace(str(opponent), "0")
+        black_board = line_str
         for pattern_name, regex in PATTERNS_PLAYER.items():
-            count = len(regex.findall(my_board))
+            count = len(regex.findall(black_board))
             if count > 0:
                 score += SCORE_TABLE[pattern_name]["mine"] * count
 
-        opp_board = (
-            line_str.replace(str(color_to_play), "X")
-            .replace(str(opponent), "1")
-            .replace("X", "2")
-        )
+        white_board = line_str.replace("1", "X").replace("2", "1").replace("X", "2")
         for pattern_name, regex in PATTERNS_PLAYER.items():
-            count = len(regex.findall(opp_board))
+            count = len(regex.findall(white_board))
             if count > 0:
                 score -= SCORE_TABLE[pattern_name]["opp"] * count
 
@@ -217,7 +212,7 @@ class IncrementalEvaluator:
             new_line_str = "".join(str(board[sq_r, sq_c]) for sq_r, sq_c in squares)
             board[r, c] = EMPTY  # Revert immediately
 
-            new_line_score = self._score_line(new_line_str, player)
+            new_line_score = self._score_line(new_line_str)
 
             # 3. Add the new score and update the line value
             self.line_values[line_id] = new_line_score
