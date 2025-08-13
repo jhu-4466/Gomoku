@@ -444,7 +444,7 @@ class NegamaxAgent:
             line_str = "".join(map(str, line)).replace(str(WHITE), str(EMPTY))
             if "01110" in line_str:
                 threes += 1
-            if "1111" in line_str:
+            if "011110" in line_str:
                 fours += 1
 
         self.board[r, c] = EMPTY
@@ -761,17 +761,6 @@ class NegamaxAgent:
                 beta = min(beta, tt_entry["score"])
             if alpha >= beta:
                 return tt_entry["score"], tt_entry.get("move")
-
-        # Null-move pruning
-        is_not_root_node = depth < self.current_search_depth
-        if depth >= 3 and is_not_root_node and beta != float("inf"):
-            # When we do a null move, we don't change the board or the score
-            score, _ = self.negamax(
-                depth - 3, -beta, -beta + 1, 3 - player, banned_moves_enabled
-            )
-            score = -score
-            if score >= beta:
-                return beta, None
 
         best_move, max_score = None, -float("inf")
         hash_move = tt_entry.get("move") if tt_entry else None
