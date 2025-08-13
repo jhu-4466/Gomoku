@@ -32,7 +32,7 @@ BLACK = 1
 WHITE = 2
 TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
 MAX_DEPTH = 50  # Max search depth for IDDFS
-TOP_K_BY_DEPTH = [16, 12, 10, 8]
+TOP_K_BY_DEPTH = [20, 16, 14, 12]
 
 
 """
@@ -45,8 +45,8 @@ SCORE_TABLE = {
     "LIVE_FOUR": {"mine": 80_000, "opp": 1_000_000},
     "LIVE_THREE": {"mine": 15_000, "opp": 100_000},
     "RUSH_FOUR": {"mine": 6_000, "opp": 20_000},
-    "SLEEPY_THREE": {"mine": 1_500, "opp": 3_000},
-    "LIVE_TWO": {"mine": 1_500, "opp": 2_000},
+    "SLEEPY_THREE": {"mine": 1_300, "opp": 3_000},
+    "LIVE_TWO": {"mine": 1_600, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 150},
     "POSITIONAL_BONUS_FACTOR": 5,
 }
@@ -137,21 +137,27 @@ class IncrementalEvaluator:
             for r, c in squares:
                 self.square_to_lines[(r, c)].append(line_id)
 
-    def _score_line(self, line_str):
+    def _score_line(self, line_str, color_to_play=BLACK):
         # Scores a single line string based on patterns
         score = 0
-        # Player 1 (Black)
-        p1_board = line_str.replace("2", "0")
+        opponent = 3 - color_to_play
+
+        my_board = line_str.replace(str(opponent), "0")
         for pattern_name, regex in PATTERNS_PLAYER.items():
-            count = len(regex.findall(p1_board))
+            count = len(regex.findall(my_board))
             if count > 0:
                 score += SCORE_TABLE[pattern_name]["mine"] * count
-        # Player 2 (White)
-        p2_board = line_str.replace("1", "X").replace("2", "1").replace("X", "2")
+
+        opp_board = (
+            line_str.replace(str(color_to_play), "X")
+            .replace(str(opponent), "1")
+            .replace("X", "2")
+        )
         for pattern_name, regex in PATTERNS_PLAYER.items():
-            count = len(regex.findall(p2_board))
+            count = len(regex.findall(opp_board))
             if count > 0:
                 score -= SCORE_TABLE[pattern_name]["opp"] * count
+
         return score
 
     def full_recalc(self, board):
@@ -182,7 +188,7 @@ class IncrementalEvaluator:
             new_line_str = "".join(str(board[sq_r, sq_c]) for sq_r, sq_c in squares)
             board[r, c] = EMPTY  # Revert immediately
 
-            new_line_score = self._score_line(new_line_str)
+            new_line_score = self._score_line(new_line_str, player)
 
             # 3. Add the new score and update the line value
             self.line_values[line_id] = new_line_score
@@ -328,24 +334,6 @@ class NegamaxAgent:
             h ^= zobrist_player_turn
         return h
 
-    def _check_forced_win(self, r, c, player):
-        if self.board[r, c] != EMPTY:
-            return False
-        self.board[r, c] = player
-        patterns = self._find_patterns_fast(player)
-        self.board[r, c] = EMPTY
-
-        if patterns.get("LIVE_FOUR", 0) >= 1:
-            return True
-        if patterns.get("RUSH_FOUR", 0) >= 2:
-            return True
-        if patterns.get("LIVE_THREE", 0) >= 2:
-            return True
-        if patterns.get("LIVE_THREE", 0) >= 1 and patterns.get("RUSH_FOUR", 0) >= 1:
-            return True
-
-        return False
-
     def _check_win_by_move(self, r, c, player):
         for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
             count = 1
@@ -484,7 +472,7 @@ class NegamaxAgent:
 
         return score if player == BLACK else -score
 
-    def _find_patterns_fast(self, player):
+    def _find_patterns(self, player):
         patterns = defaultdict(int)
 
         # transform the board to a player-centric view:
@@ -517,7 +505,7 @@ class NegamaxAgent:
         return patterns
 
     def _calculate_synergy_at(self, r, c, player):
-        if self._check_forced_win(r, c, player):
+        if self._is_vcf_threat(r, c, player):
             return SCORE_TABLE["LIVE_FOUR"]["mine"]
 
         opponent = 3 - player
@@ -715,18 +703,19 @@ class NegamaxAgent:
 
         return final_ordered_list
 
-    def _is_vcf_threat(self, move, player, banned_moves_enabled):
-        r, c = move
+    def _is_vcf_threat(self, r, c, player):
         if self.board[r, c] != EMPTY:
             return False
         self.board[r, c] = player
-        patterns = self._find_patterns_fast(player)
+        patterns = self._find_patterns(player)
         self.board[r, c] = EMPTY
-        if patterns.get("LIVE_FOUR", 0) > 0:
+
+        if patterns.get("LIVE_FOUR", 0) >= 1:
             return True
-        if patterns.get("LIVE_THREE", 0) >= 2:
-            if player == WHITE or (player == BLACK and not banned_moves_enabled):
-                return True
+        if patterns.get("RUSH_FOUR", 0) >= 1:
+            return True
+        if patterns.get("LIVE_THREE", 0) >= 1:
+            return True
         return False
 
     def negamax(self, depth, alpha, beta, player, banned_moves_enabled):
@@ -944,7 +933,7 @@ class NegamaxAgent:
             return False
 
         self.board[r, c] = player
-        patterns = self._find_patterns_fast(player)
+        patterns = self._find_patterns(player)
         self.board[r, c] = EMPTY
 
         # Any kind of "four" or a "live three" is considered a tactical threat
@@ -966,7 +955,6 @@ class NegamaxAgent:
         best_move_so_far = None
         final_search_depth = 0
 
-        self.evaluator.full_recalc(self.board)
         for depth in range(1, MAX_DEPTH + 1):
             try:
                 self.current_search_depth = depth
@@ -1026,6 +1014,7 @@ class NegamaxAgent:
         Clears the transposition table, history heuristic, and killer moves.
         """
         self.transposition_table.clear()
+        self.evaluator.full_recalc(self.board)
         logger.info("New game signal received. Transposition table has been cleared.")
 
     def _check_timeout(self):
