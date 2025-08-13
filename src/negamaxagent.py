@@ -237,6 +237,7 @@ class NegamaxAgent:
         self.board = np.zeros((board_size, board_size), dtype=int)
         self.evaluator = IncrementalEvaluator(board_size)
         self.current_turn = 0
+        self.zobrist_stack = []
 
         self.killer_moves = [[None, None] for _ in range(MAX_DEPTH + 1)]
         self.search_generation = 0
@@ -352,7 +353,7 @@ class NegamaxAgent:
 
         return None
 
-    def _compute_hash(self, player):
+    def _init_hash(self, player):
         h = np.uint64(0)
         for r in range(self.board_size):
             for c in range(self.board_size):
@@ -361,6 +362,34 @@ class NegamaxAgent:
         if player == WHITE:
             h ^= zobrist_player_turn
         return h
+
+    def _push_hash_state(self, r, c, player, current_hash):
+        new_hash = current_hash
+
+        old_piece = self.board[r, c]
+        if old_piece != EMPTY:
+            new_hash ^= zobrist_table[r, c, old_piece]
+
+        new_hash ^= zobrist_table[r, c, player]
+        new_hash ^= zobrist_player_turn
+        self.zobrist_stack.append(
+            {
+                "old_hash": current_hash,
+                "new_hash": new_hash,
+                "position": (r, c),
+                "old_piece": old_piece,
+                "player": player,
+            }
+        )
+
+        return new_hash
+
+    def _pop_hash_state(self):
+        if not self.zobrist_stack:
+            raise Exception("Zobrist stack is empty!")
+
+        state = self.zobrist_stack.pop()
+        return state["old_hash"]
 
     def _check_win_by_move(self, r, c, player):
         for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
@@ -508,8 +537,8 @@ class NegamaxAgent:
             for pattern_name, regex in PATTERNS_PLAYER.items():
                 patterns[pattern_name] += len(regex.findall(line))
 
-        if patterns["FIVE"] > 0:
-            patterns["RUSH_FOUR"] -= patterns["FIVE"] * 4
+        # if patterns["FIVE"] > 0:
+        #     patterns["RUSH_FOUR"] -= patterns["FIVE"] * 4
 
         return patterns
 
@@ -614,10 +643,10 @@ class NegamaxAgent:
         including static threat analysis, to achieve
         Threat Space Search.
         """
-        board_hash = self._compute_hash(player)
-        tt_entry = self.transposition_table.get(board_hash)
-        if tt_entry and "sorted_moves" in tt_entry:
-            return tt_entry["sorted_moves"]
+        # board_hash = self._compute_hash(player)
+        # tt_entry = self.transposition_table.get(board_hash)
+        # if tt_entry and "sorted_moves" in tt_entry:
+        #     return tt_entry["sorted_moves"]
 
         moves = self._get_candidate_moves(player, banned_moves_enabled)
         opponent = 3 - player
@@ -737,7 +766,29 @@ class NegamaxAgent:
 
         return list(completion_moves)
 
-    def negamax(self, depth, alpha, beta, player, banned_moves_enabled):
+    def _is_killer_move_candidate(self, r, c, player):
+        if self._check_win_by_move(r, c, player):
+            return False
+
+        return self._is_vcf_threat(r, c, player)
+
+    def _update_killer_moves(self, depth, move, player):
+        r, c = move
+        if not self._is_killer_move_candidate(r, c, player):
+            return
+
+        if move == self.killer_moves[depth][0]:
+            return
+        if move == self.killer_moves[depth][1]:
+            self.killer_moves[depth][1] = self.killer_moves[depth][0]
+            self.killer_moves[depth][0] = move
+        else:
+            self.killer_moves[depth][1] = self.killer_moves[depth][0]
+            self.killer_moves[depth][0] = move
+
+    def negamax(
+        self, depth, alpha, beta, player, banned_moves_enabled, current_hash=None
+    ):
         self._check_timeout()
 
         if depth <= 0:
@@ -745,7 +796,9 @@ class NegamaxAgent:
             return q_score, None
 
         original_alpha = alpha
-        board_hash = self._compute_hash(player)
+        if current_hash is None:
+            current_hash = self._init_hash(player)
+        board_hash = current_hash
         tt_entry = self.transposition_table.get(board_hash)
 
         if (
@@ -773,6 +826,15 @@ class NegamaxAgent:
             self._check_timeout()
 
             r, c = move
+
+            # update hash
+            original_total_score = self.evaluator.total_score
+            original_line_values = {
+                line_id: self.evaluator.line_values[line_id]
+                for line_id in self.evaluator.square_to_lines.get((r, c), [])
+            }
+            new_hash = self._push_hash_state(r, c, player, current_hash)
+
             original_total_score = self.evaluator.total_score
             original_line_values = {
                 line_id: self.evaluator.line_values[line_id]
@@ -783,26 +845,44 @@ class NegamaxAgent:
             self.board[r, c] = player
 
             if self._check_win_by_move(r, c, player):
-                score = SCORE_TABLE["FIVE"]["mine"]
+                self.board[r, c] = EMPTY
+                self.evaluator.total_score = original_total_score
+                self.evaluator.line_values.update(original_line_values)
+                return SCORE_TABLE["FIVE"]["mine"], (r, c)
             else:
                 # The core PVS logic
                 if i == 0:
                     # 1. Principal Variation) - full search
                     score, _ = self.negamax(
-                        depth - 1, -beta, -alpha, 3 - player, banned_moves_enabled
+                        depth - 1,
+                        -beta,
+                        -alpha,
+                        3 - player,
+                        banned_moves_enabled,
+                        new_hash,
                     )
                     score = -score
                 else:
                     # 2. Other moves with quick "scout search" (zero-window search)(-alpha-1, -alpha)
                     score, _ = self.negamax(
-                        depth - 1, -alpha - 1, -alpha, 3 - player, banned_moves_enabled
+                        depth - 1,
+                        -alpha - 1,
+                        -alpha,
+                        3 - player,
+                        banned_moves_enabled,
+                        new_hash,
                     )
                     score = -score
 
                     # 3. if score > alpha, do a full search again
                     if alpha < score < beta:
                         score, _ = self.negamax(
-                            depth - 1, -beta, -alpha, 3 - player, banned_moves_enabled
+                            depth - 1,
+                            -beta,
+                            -alpha,
+                            3 - player,
+                            banned_moves_enabled,
+                            new_hash,
                         )
                         score = -score
 
@@ -810,6 +890,7 @@ class NegamaxAgent:
             self.board[r, c] = EMPTY
             self.evaluator.total_score = original_total_score
             self.evaluator.line_values.update(original_line_values)
+            old_hash = self._pop_hash_state()
 
             # Add depth-aware scoring to distinguish between wins/losses at different speeds
             if abs(score) >= SCORE_TABLE["LIVE_FOUR"]["mine"]:
@@ -822,11 +903,8 @@ class NegamaxAgent:
                 max_score = score
                 best_move = (r, c)
 
-            alpha = max(alpha, max_score)
-            if alpha >= beta:
-                if move != self.killer_moves[depth][0]:
-                    self.killer_moves[depth][1] = self.killer_moves[depth][0]
-                    self.killer_moves[depth][0] = move
+            if score >= beta:
+                self._update_killer_moves(depth, move, player)
                 break
 
         # Transposition table saving
@@ -843,7 +921,7 @@ class NegamaxAgent:
                 "flag": flag,
                 "move": best_move,
                 "age": self.search_generation,
-                "sorted_moves": moves,
+                # "sorted_moves": moves,
             }
 
         return max_score, best_move
@@ -1015,9 +1093,13 @@ class NegamaxAgent:
                         completion_moves.add(squares[start_index])
                         completion_moves.add(squares[start_index + 4])
                     elif matched_pattern == "010110":
+                        completion_moves.add(squares[start_index])
                         completion_moves.add(squares[start_index + 2])
+                        completion_moves.add(squares[start_index + 5])
                     elif matched_pattern == "011010":
+                        completion_moves.add(squares[start_index])
                         completion_moves.add(squares[start_index + 3])
+                        completion_moves.add(squares[start_index + 5])
 
         valid_moves = []
         for r, c in completion_moves:
@@ -1065,6 +1147,10 @@ class NegamaxAgent:
             patterns.get("LIVE_FOUR", 0) > 0
             or patterns.get("RUSH_FOUR", 0) > 0
             or patterns.get("LIVE_THREE", 0) > 0
+            or (
+                patterns.get("LIVE_THREE", 0) >= 1
+                and patterns.get("SLEEPY_THREE", 0) >= 1
+            )
         ):
             urgent_defenses = self._find_urgent_defense_moves(opponent)
             if urgent_defenses:
