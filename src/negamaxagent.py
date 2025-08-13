@@ -43,12 +43,15 @@ SYNERGY_FACTOR = 0.5
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
     "LIVE_FOUR": {"mine": 80_000, "opp": 1_000_000},
-    "LIVE_THREE": {"mine": 15_000, "opp": 100_000},
+    "LIVE_THREE": {"mine": 30_000, "opp": 100_000},
     "RUSH_FOUR": {"mine": 6_000, "opp": 20_000},
     "SLEEPY_THREE": {"mine": 1_300, "opp": 3_000},
     "LIVE_TWO": {"mine": 1_600, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 150},
     "POSITIONAL_BONUS_FACTOR": 5,
+}
+EXCEPTION_PATTERN = {
+    "LIVE_THREE_FOUR": re.compile(r"0011100|00101100|00110100"),
 }
 PATTERNS_PLAYER = {
     "FIVE": re.compile(r"11111"),
@@ -210,7 +213,6 @@ class NegamaxAgent:
         self.current_turn = 0
 
         self.killer_moves = [[None, None] for _ in range(MAX_DEPTH + 1)]
-        self.history_heuristic = defaultdict(int)
         self.search_generation = 0
         self.last_depth_start_time = 0
 
@@ -551,17 +553,17 @@ class NegamaxAgent:
             base_bonus_score = sum(
                 SCORE_TABLE[p]["mine"] for p in offensive_patterns_found
             )
-            synergy_score += base_bonus_score * SYNERGY_FACTOR
+            synergy_score += base_bonus_score
         if offensive_threat_count >= 1 and defensive_block_count >= 1:
             base_bonus_score = sum(
                 SCORE_TABLE[p]["mine"] for p in offensive_patterns_found
             ) + sum(SCORE_TABLE[p]["opp"] for p in defensive_patterns_found)
-            synergy_score += base_bonus_score * SYNERGY_FACTOR
+            synergy_score += base_bonus_score
         if defensive_block_count >= 2:
             base_bonus_score = sum(
                 SCORE_TABLE[p]["opp"] for p in defensive_patterns_found
             )
-            synergy_score += base_bonus_score * SYNERGY_FACTOR
+            synergy_score += base_bonus_score
 
         return synergy_score
 
@@ -597,9 +599,6 @@ class NegamaxAgent:
         # --- 3. Calculate Synergy Bonus ---
         total_score_change += self._calculate_synergy_at(r, c, player)
 
-        # --- 4. Add History Heuristic Score ---
-        total_score_change += self.history_heuristic.get((r, c), 0)
-
         return total_score_change
 
     def get_possible_moves(self, player, banned_moves_enabled, depth, hash_move):
@@ -620,6 +619,7 @@ class NegamaxAgent:
         hash_moves = []
         killer_moves_list = []
         regular_moves = []
+        move_scores = {}
 
         for move in moves:
             r, c = move
@@ -629,6 +629,18 @@ class NegamaxAgent:
                 urgent_attacks.append(move)
             else:
                 regular_moves.append(move)
+
+        if len(urgent_defenses) == 1 and depth > 0:
+            return urgent_defenses
+        elif len(urgent_defenses) > 1 and depth > 3:
+            defense_scores = {
+                m: self._rate_move_statically(m[0], m[1], player)
+                for m in urgent_defenses
+            }
+            sorted_defenses = sorted(
+                urgent_defenses, key=lambda m: defense_scores[m], reverse=True
+            )
+            return sorted_defenses[: min(3, len(sorted_defenses))]
 
         # Hash Moves
         if hash_move and hash_move in moves:
@@ -670,33 +682,18 @@ class NegamaxAgent:
             if absolute_depth < 0:
                 absolute_depth = 0
 
-            if regular_moves:
-                move_scores = {
-                    m: self._rate_move_statically(m[0], m[1], player)
-                    for m in regular_moves
-                }
-                if move_scores:
-                    eval_spread = max(move_scores.values()) - min(move_scores.values())
-                    if eval_spread > 20000:
-                        base_top_k = (
-                            TOP_K_BY_DEPTH[min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)]
-                            // 2
-                        )
-                    else:
-                        base_top_k = TOP_K_BY_DEPTH[
-                            min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)
-                        ]
-                else:
-                    base_top_k = TOP_K_BY_DEPTH[
-                        min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)
-                    ]
-            else:
-                base_top_k = TOP_K_BY_DEPTH[
-                    min(absolute_depth, len(TOP_K_BY_DEPTH) - 1)
-                ]
-
-            critical_moves_count = len(urgent_defenses) + len(urgent_attacks)
-            top_k = max(8, base_top_k, critical_moves_count + 2)
+            critical_moves_count = (
+                len(urgent_defenses)
+                + len(urgent_attacks)
+                + len(hash_moves)
+                + len(killer_moves_list)
+            )
+            top_k = min(
+                TOP_K_BY_DEPTH[
+                    (absolute_depth if absolute_depth < len(TOP_K_BY_DEPTH) else -1)
+                ],
+                critical_moves_count + 2,
+            )
 
             if len(final_ordered_list) > top_k:
                 final_ordered_list = final_ordered_list[:top_k]
@@ -706,7 +703,7 @@ class NegamaxAgent:
     def _find_live_three_ends(self, player):
         completion_moves = set()
 
-        live_three_regex = PATTERNS_PLAYER["LIVE_THREE"]
+        live_three_regex = EXCEPTION_PATTERN["LIVE_THREE_FOUR"]
 
         for line_id, squares in self.evaluator.lines.items():
             line_str_raw = "".join(str(self.board[r, c]) for r, c in squares)
@@ -721,15 +718,15 @@ class NegamaxAgent:
                 matched_pattern = match.group(0)
                 start_index = match.start()
 
-                if matched_pattern == "01110":
-                    completion_moves.add(squares[start_index])
-                    completion_moves.add(squares[start_index + 4])
-                elif matched_pattern == "010110":
+                if matched_pattern == "0011100":
+                    completion_moves.add(squares[start_index + 1])
+                    completion_moves.add(squares[start_index + 5])
+                elif matched_pattern == "00101100":
                     # For _X_XX_, the key empty cell is at relative position 2.
-                    completion_moves.add(squares[start_index + 2])
-                elif matched_pattern == "011010":
-                    # For _XX_X_, the key empty cell is at relative position 3.
                     completion_moves.add(squares[start_index + 3])
+                elif matched_pattern == "00110100":
+                    # For _XX_X_, the key empty cell is at relative position 3.
+                    completion_moves.add(squares[start_index + 4])
 
         return list(completion_moves)
 
@@ -863,7 +860,6 @@ class NegamaxAgent:
                 if move != self.killer_moves[depth][0]:
                     self.killer_moves[depth][1] = self.killer_moves[depth][0]
                     self.killer_moves[depth][0] = move
-                self.history_heuristic[move] += depth * depth
                 break
 
         # Transposition table saving
@@ -1007,12 +1003,78 @@ class NegamaxAgent:
 
         return list(moves)
 
+    def _find_urgent_defense_moves(self, opponent):
+        urgent_defense_moves = []
+
+        live_four_blocks = self._find_pattern_completion_moves(opponent, "LIVE_FOUR")
+        urgent_defense_moves.extend(live_four_blocks)
+
+        rush_four_blocks = self._find_pattern_completion_moves(opponent, "RUSH_FOUR")
+        urgent_defense_moves.extend(rush_four_blocks)
+
+        live_three_blocks = self._find_pattern_completion_moves(opponent, "LIVE_THREE")
+        urgent_defense_moves.extend(live_three_blocks)
+
+        return urgent_defense_moves
+
+    def _find_pattern_completion_moves(self, player, pattern_name):
+        completion_moves = set()
+        pattern_regex = PATTERNS_PLAYER[pattern_name]
+
+        for line_id, squares in self.evaluator.lines.items():
+            line_str_raw = "".join(str(self.board[r, c]) for r, c in squares)
+
+            if player == BLACK:
+                line_str = line_str_raw
+            else:
+                line_str = (
+                    line_str_raw.replace("1", "T").replace("2", "1").replace("T", "2")
+                )
+
+            for match in pattern_regex.finditer(line_str):
+                matched_pattern = match.group(0)
+                start_index = match.start()
+
+                if pattern_name == "LIVE_FOUR":
+                    if matched_pattern == "011110":
+                        completion_moves.add(squares[start_index])
+                        completion_moves.add(squares[start_index + 5])
+                elif pattern_name == "RUSH_FOUR":
+                    if matched_pattern == "211110":
+                        completion_moves.add(squares[start_index + 5])
+                    elif matched_pattern == "011112":
+                        completion_moves.add(squares[start_index])
+                    elif matched_pattern == "10111":
+                        completion_moves.add(squares[start_index + 1])
+                    elif matched_pattern == "11011":
+                        completion_moves.add(squares[start_index + 2])
+                    elif matched_pattern == "11101":
+                        completion_moves.add(squares[start_index + 3])
+                elif pattern_name == "LIVE_THREE":
+                    if matched_pattern == "01110":
+                        completion_moves.add(squares[start_index])
+                        completion_moves.add(squares[start_index + 4])
+                    elif matched_pattern == "010110":
+                        completion_moves.add(squares[start_index + 2])
+                    elif matched_pattern == "011010":
+                        completion_moves.add(squares[start_index + 3])
+
+        valid_moves = []
+        for r, c in completion_moves:
+            if (
+                0 <= r < self.board_size
+                and 0 <= c < self.board_size
+                and self.board[r, c] == EMPTY
+            ):
+                valid_moves.append((r, c))
+
+        return valid_moves
+
     def find_best_move(self, board_state, player, banned_moves_enabled):
         self.board = np.array(board_state)
         self.start_time = time.time()
         self.search_generation += 1
         self.killer_moves = [[None, None] for _ in range(MAX_DEPTH + 1)]
-        self.history_heuristic.clear()
         best_move_so_far = None
         final_search_depth = 0
 
@@ -1023,7 +1085,7 @@ class NegamaxAgent:
         ]
         if my_win_moves:
             logger.info(
-                f"High-level rule: Found immediate win at {my_win_moves[0]}. Skipping search."
+                f"[Turn {self.current_turn}] High-level rule: Found immediate win at {my_win_moves[0]}. Skipping search."
             )
             return my_win_moves[0], 0  # Return move, depth=0
         opponent = 3 - player
@@ -1032,11 +1094,38 @@ class NegamaxAgent:
         ]
         if opponent_win_moves:
             logger.info(
-                f"High-level rule: Blocking opponent's win at {opponent_win_moves[0]}. Skipping search."
+                f"[Turn {self.current_turn}] High-level rule: Blocking opponent's win at {opponent_win_moves[0]}. Skipping search."
             )
             return opponent_win_moves[0], 0
 
-        # EXCEPTION: forcedly LIVE_THREE-> LIVE_FOUR(offensive) or SLEEPY_THREE(defense)
+        # 2nd Priority: Check for opponent's urgent threats
+        urgent_defenses = []
+        patterns = self._find_patterns(opponent)
+        if (
+            patterns.get("LIVE_FOUR", 0) > 0
+            or patterns.get("RUSH_FOUR", 0) > 0
+            or patterns.get("LIVE_THREE", 0) > 0
+        ):
+            urgent_defenses = self._find_urgent_defense_moves(opponent)
+            if urgent_defenses:
+                valid_defenses = [m for m in urgent_defenses if m in candidate_moves]
+                if valid_defenses:
+                    if len(valid_defenses) == 1:
+                        logger.info(
+                            f"[Turn {self.current_turn}] Urgent Defense Rule: Found urgent defense at {valid_defenses[0]}. Skipping search."
+                        )
+                        return valid_defenses[0], 0
+                    else:
+                        move_scores = {
+                            m: self._rate_move_statically(m[0], m[1], player)
+                            for m in valid_defenses
+                        }
+                        chosen_move = max(move_scores, key=move_scores.get)
+                        logger.info(
+                            f"[Turn {self.current_turn}] Urgent Defense Rule: Found urgent defense at {chosen_move}. Skipping search."
+                        )
+                        return chosen_move, 0
+        # EXCEPTION: forcedly LIVE_THREE-> LIVE_FOUR(offensive) or SLEEPY_THREE(defense) to avoid OVERLAPPING
         live_three_completion_moves = self._find_live_three_ends(player)
         valid_completion_moves = [
             m for m in live_three_completion_moves if m in candidate_moves
@@ -1048,9 +1137,6 @@ class NegamaxAgent:
                 chosen_move = valid_completion_moves[0]
             else:
                 # If there are two endpoints, evaluate which one is better.
-                logger.info(
-                    f"High-level rule: Evaluating {len(valid_completion_moves)} LIVE_THREE endpoints."
-                )
                 move_scores = {
                     m: self._rate_move_statically(m[0], m[1], player)
                     for m in valid_completion_moves
@@ -1058,7 +1144,7 @@ class NegamaxAgent:
                 chosen_move = max(move_scores, key=move_scores.get)
 
             logger.info(
-                f"High-level rule: Found LIVE_THREE. Choosing best endpoint {chosen_move} from {valid_completion_moves}. Skipping search."
+                f"[Turn {self.current_turn}] Live_3 -> Live_4 Rule: Found LIVE_THREE. Choosing best endpoint {chosen_move} from {valid_completion_moves}. Skipping search."
             )
             return chosen_move, 0
 
