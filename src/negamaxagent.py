@@ -44,10 +44,10 @@ SYNERGY_FACTOR = 0.5
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
     "LIVE_FOUR": {"mine": 80_000, "opp": 1_000_000},
-    "LIVE_THREE": {"mine": 8_000, "opp": 50_000},
-    "RUSH_FOUR": {"mine": 5_000, "opp": 20_000},
-    "SLEEPY_THREE": {"mine": 800, "opp": 2_000},
-    "LIVE_TWO": {"mine": 500, "opp": 1_000},
+    "LIVE_THREE": {"mine": 15_000, "opp": 60_000},
+    "RUSH_FOUR": {"mine": 6_000, "opp": 18_000},
+    "SLEEPY_THREE": {"mine": 1_500, "opp": 3_000},
+    "LIVE_TWO": {"mine": 1_500, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 150},
     "POSITIONAL_BONUS_FACTOR": 5,
 }
@@ -966,26 +966,9 @@ class NegamaxAgent:
                 self.current_search_depth = depth
                 logger.info(f"--- Starting search at depth {depth} ---")
 
-                # Aspiration Windows - dynamically adjust the aspiration window
-                BASE_DELTA = SCORE_TABLE["SLEEPY_THREE"]["opp"]
-                FLEX_DELTA_RATIO = 0.20
-                aspiration_delta = BASE_DELTA + int(abs(last_score) * FLEX_DELTA_RATIO)
-                max_delta = SCORE_TABLE["LIVE_FOUR"]["mine"]  # 例如，上限为“活四”的分数
-                aspiration_delta = min(aspiration_delta, max_delta)
-
-                alpha = last_score - aspiration_delta
-                beta = last_score + aspiration_delta
-
                 score, move = self.negamax(
-                    depth, alpha, beta, player, banned_moves_enabled
+                    depth, -float("inf"), float("inf"), player, banned_moves_enabled
                 )
-                if score <= alpha or score >= beta:
-                    logger.warning(
-                        f"Aspiration search failed (score: {score}). Re-searching with full window."
-                    )
-                    score, move = self.negamax(
-                        depth, -float("inf"), float("inf"), player, banned_moves_enabled
-                    )
                 last_score = score
 
                 if move is not None:
@@ -1173,8 +1156,4 @@ def get_move():
 
 
 if __name__ == "__main__":
-    try:
-        logger.info("Starting Flask server on port 5003.")
-        app.run(port=5003, debug=False)
-    except Exception:
-        logger.critical("Failed to start the Flask server.", exc_info=True)
+    app.run(port=5003, debug=False)
