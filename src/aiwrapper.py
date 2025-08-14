@@ -150,9 +150,9 @@ def get_move():
             # AI is Player 2 or it's a later turn.
             last_move = move_history[-1]["move"]
             print(
-                f"--- Sending TURN for opponent's move: {[last_move[0] + 1, last_move[1] + 1]} ---"
+                f"--- Sending TURN for opponent's move: {[last_move[0], last_move[1]]} ---"
             )
-            move_str = gomoku_engine_wrapper.turn(last_move[0] + 1, last_move[1] + 1)
+            move_str = gomoku_engine_wrapper.turn(last_move[0], last_move[1])
 
         thinking_time = time.time() - start_time
         print(f"AI thinking time: {thinking_time:.2f}s")
@@ -160,7 +160,7 @@ def get_move():
         # STEP 3: Parse the response.
         if move_str:
             parts = move_str.split(",")
-            move = [int(parts[0].strip()) - 1, int(parts[1].strip()) - 1]
+            move = [int(parts[0].strip()), int(parts[1].strip())]
             return jsonify({"move": move, "search_depth": -1})
 
         error_msg = f"Engine returned unexpected empty output: '{move_str}'"
