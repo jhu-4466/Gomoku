@@ -563,7 +563,6 @@ class NegamaxAgent:
             for name, regex in PATTERNS_PLAYER.items():
                 if regex.search(player_centric_str):
                     offensive_patterns_found.append(name)
-                    break
             self.board[r, c] = opponent
             line_str_opp = "".join(
                 str(self.board[sq_r, sq_c]) for sq_r, sq_c in squares
@@ -574,7 +573,6 @@ class NegamaxAgent:
             for name, regex in PATTERNS_PLAYER.items():
                 if regex.search(opponent_centric_str):
                     defensive_patterns_found.append(name)
-                    break
         self.board[r, c] = original_piece
 
         offensive_threat_count = len(offensive_patterns_found)
