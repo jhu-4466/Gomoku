@@ -78,7 +78,7 @@ SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
     "LIVE_FOUR": {"mine": 80_000, "opp": 1_000_000},
     "LIVE_THREE": {"mine": 30_000, "opp": 150_000},
-    "RUSH_FOUR": {"mine": 6_000, "opp": 20_000},
+    "RUSH_FOUR": {"mine": 10_000, "opp": 20_000},
     "SLEEPY_THREE": {"mine": 1_300, "opp": 3_000},
     "LIVE_TWO": {"mine": 1_600, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 150},
