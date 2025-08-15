@@ -113,9 +113,45 @@ class AgentWrapper:
         return self._get_response()
 
 
+# --- Helper Function for Move Adjustment ---
+def find_nearest_empty_spot(board, x, y):
+    """
+    Finds the nearest empty spot on the board to a given (x, y) coordinate.
+    Searches in an expanding spiral pattern.
+    Assumes 0 is an empty spot.
+    """
+    board_size = len(board)
+    # Clamp the initial coordinates to be within the valid 0-based index range
+    clamped_x = max(0, min(x, board_size - 1))
+    clamped_y = max(0, min(y, board_size - 1))
+
+    # Check the clamped spot first
+    if board[clamped_y][clamped_x] == 0:
+        return [clamped_x, clamped_y]
+
+    # Search in an expanding radius (spiral search)
+    for r in range(1, board_size):
+        # Iterate over the perimeter of a square of radius r
+        for i in range(-r, r + 1):
+            for j in range(-r, r + 1):
+                # Only check the points on the perimeter, not the inside
+                if abs(i) != r and abs(j) != r:
+                    continue
+
+                check_x, check_y = clamped_x + i, clamped_y + j
+
+                # Check if the point is within board boundaries
+                if 0 <= check_x < board_size and 0 <= check_y < board_size:
+                    if board[check_y][check_x] == 0:
+                        return [check_x, check_y]
+
+    return None  # Should not happen unless the board is full
+
+
 # --- Flask Web Server Setup ---
 app = Flask(__name__)
 gomoku_engine_wrapper = None
+GRID_SIZE = 15
 
 
 @app.route("/get_move", methods=["POST"])
@@ -126,6 +162,7 @@ def get_move():
         return jsonify({"error": "Engine wrapper not initialized."}), 500
 
     data = request.get_json()
+    board = data["board"]
     move_history = data.get("move_history", [])
     is_new_game = data.get("new_game", False)
     banned_moves_enabled = data.get("banned_moves_enabled", False)
@@ -157,10 +194,27 @@ def get_move():
         thinking_time = time.time() - start_time
         print(f"AI thinking time: {thinking_time:.2f}s")
 
-        # STEP 3: Parse the response.
+        # STEP 3: Parse and VALIDATE the response.
         if move_str:
             parts = move_str.split(",")
             move = [int(parts[0].strip()), int(parts[1].strip())]
+
+            # --- Check for out-of-bounds move and adjust if necessary ---
+            if move[0] >= GRID_SIZE or move[1] >= GRID_SIZE:
+                print(
+                    f"WARNING: AI returned out-of-bounds move {move}. Finding nearest empty spot..."
+                )
+                adjusted_move = find_nearest_empty_spot(board, move[0], move[1])
+
+                if adjusted_move:
+                    move = adjusted_move
+                    print(f"SUCCESS: Adjusted move to {move}.")
+                else:
+                    # This case happens if the board is full
+                    error_msg = f"FATAL: AI returned out-of-bounds move {move} but no empty spots were found."
+                    print(error_msg)
+                    return jsonify({"error": error_msg}), 500
+
             return jsonify({"move": move, "search_depth": -1})
 
         error_msg = f"Engine returned unexpected empty output: '{move_str}'"
@@ -204,9 +258,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # Update the global GRID_SIZE before initializing the engine
+    GRID_SIZE = args.size
+
     AI_EXECUTABLE_PATH = os.path.abspath(args.model_path)
     SERVER_PORT = args.port
-    GRID_SIZE = args.size
 
     if not os.path.exists(AI_EXECUTABLE_PATH):
         print(
