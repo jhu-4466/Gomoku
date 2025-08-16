@@ -1173,7 +1173,7 @@ class ReplayWindow(QDialog):
             )
             color_str = "Black" if current_move["color"] == 1 else "White"
             turn_num = current_move["turn"]
-            info_text = f"Turn {turn_num}: {player_name} ({color_str}) at {last_move}"
+            info_text = f"Turn {turn_num}: {player_name} ({color_str}) at {last_move[0] + 1, last_move[1] + 1}"
         else:
             info_text = "Game Start. Press 'Next' to begin."
 
