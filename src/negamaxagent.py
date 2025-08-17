@@ -1274,14 +1274,14 @@ class NegamaxAgent:
         if hash_move and hash_move in moves:
             ordered_moves.append(hash_move)
             moves.remove(hash_move)
-        # 2. VCF offensive threats
-        ordered_moves.extend(vcf_threats)
-        # 3. VCF defensive moves
+        # 2. VCF defensive moves
         ordered_moves.extend(defensive_vcf)
-        # 4. VCT offensive threats
-        ordered_moves.extend(vct_threats)
-        # 5. VCT defensive moves
+        # 3. VCF offensive threats
+        ordered_moves.extend(vcf_threats)
+        # 4. VCT defensive moves
         ordered_moves.extend(defensive_vct)
+        # 5. VCT offensive threats
+        ordered_moves.extend(vct_threats)
         # 6. Killer moves
         if depth < len(self.killer_moves):
             for killer in self.killer_moves[depth]:
