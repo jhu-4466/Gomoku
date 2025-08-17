@@ -61,6 +61,7 @@ WHITE = 2
 TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
 MAX_DEPTH = 50  # Max search depth for IDDFS
 TOP_K_BY_DEPTH = [20, 16, 14, 12]
+MOVE_DIRECTIONS = [(1, 0), (0, 1), (1, 1), (1, -1)]
 # VCF/VCT
 MAX_VCF_DEPTH = 12
 MAX_VCT_DEPTH = 6
@@ -307,8 +308,7 @@ class ThreatDetector:
         board[r, c] = player
 
         # Find critical defensive points
-        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
-        for dr, dc in directions:
+        for dr, dc in MOVE_DIRECTIONS:
             # if not self._check_urgent_threat_in_direction(board, r, c, player, dr, dc):
             #     continue
             # Find empty spots in the threat line
@@ -504,37 +504,35 @@ class VCFSearcher:
         visited_states.discard(board_hash)
         return VCFResult(False, depth)
 
-    def _sort_threats_by_priority(self, board, threats, player):
-        """Sort threats by their strategic value"""
-        threat_scores = []
+    # def _sort_threats_by_priority(self, board, threats, player):
+    #     """Sort threats by their strategic value"""
+    #     threat_scores = []
 
-        for threat in threats:
-            r, c = threat
+    #     for threat in threats:
+    #         r, c = threat
 
-            # Check connectivity to existing stones
-            connectivity = 0
-            for dr in [-1, 0, 1]:
-                for dc in [-1, 0, 1]:
-                    if dr == 0 and dc == 0:
-                        continue
-                    nr, nc = r + dr, c + dc
-                    if (
-                        0 <= nr < self.board_size
-                        and 0 <= nc < self.board_size
-                        and board[nr, nc] == player
-                    ):
-                        connectivity += 1
+    #         # Check connectivity to existing stones
+    #         connectivity = 0
+    #         for dr in [-1, 0, 1]:
+    #             for dc in [-1, 0, 1]:
+    #                 if dr == 0 and dc == 0:
+    #                     continue
+    #                 nr, nc = r + dr, c + dc
+    #                 if (
+    #                     0 <= nr < self.board_size
+    #                     and 0 <= nc < self.board_size
+    #                     and board[nr, nc] == player
+    #                 ):
+    #                     connectivity += 1
 
-            threat_scores.append((threat, connectivity * 2))
+    #         threat_scores.append((threat, connectivity * 2))
 
-        threat_scores.sort(key=lambda x: x[1], reverse=True)
-        return [t[0] for t in threat_scores]
+    #     threat_scores.sort(key=lambda x: x[1], reverse=True)
+    #     return [t[0] for t in threat_scores]
 
     def _check_win(self, board, r, c, player):
         """Check if move creates a win"""
-        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
-
-        for dr, dc in directions:
+        for dr, dc in MOVE_DIRECTIONS:
             count = 1
 
             # Count in positive direction
@@ -733,9 +731,7 @@ class VCTSearcher:
         defenses = []
 
         # Check intersections of threat lines
-        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
-
-        for dr, dc in directions:
+        for dr, dc in MOVE_DIRECTIONS:
             # Look for key defensive points
             for i in [-2, -1, 1, 2]:
                 nr, nc = r + i * dr, c + i * dc
@@ -771,33 +767,6 @@ class VCTSearcher:
                         defenses.append((nr, nc))
 
         return defenses[:3]
-
-    def _get_critical_defenses(self, board, threat_move, player):
-        """Get only the most critical defensive moves"""
-        r, c = threat_move
-        defensive_moves = []
-
-        # Find spots that must be defended
-        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
-
-        for dr, dc in directions:
-            critical_spots = []
-
-            # Check both sides of the threat
-            for i in range(1, 4):
-                for sign in [1, -1]:
-                    nr, nc = r + sign * i * dr, c + sign * i * dc
-                    if (
-                        0 <= nr < self.board_size
-                        and 0 <= nc < self.board_size
-                        and board[nr, nc] == EMPTY
-                    ):
-                        critical_spots.append((nr, nc))
-
-            # Add most critical spots from this direction
-            defensive_moves.extend(critical_spots[:2])
-
-        return list(set(defensive_moves))
 
 
 class IncrementalEvaluator:
@@ -1079,7 +1048,7 @@ class NegamaxAgent:
         return state["old_hash"]
 
     def _check_win_by_move(self, r, c, player):
-        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+        for dr, dc in MOVE_DIRECTIONS:
             count = 1
             for i in range(1, 5):
                 nr, nc = r + i * dr, c + i * dc
@@ -1116,7 +1085,7 @@ class NegamaxAgent:
 
         # --- Check for overline ---
         is_overline = False
-        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+        for dr, dc in MOVE_DIRECTIONS:
             count = 1
             for i in range(1, 6):
                 nr, nc = r + i * dr, c + i * dc
@@ -1145,7 +1114,7 @@ class NegamaxAgent:
 
         # --- Check for live three and four ---
         threes, fours = 0, 0
-        for dr, dc in [(1, 0), (0, 1), (1, 1), (1, -1)]:
+        for dr, dc in MOVE_DIRECTIONS:
             # Create a line of 9 points centered on the move
             line = [
                 (
