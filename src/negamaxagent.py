@@ -194,6 +194,8 @@ class ThreatDetector:
 
         for r in range(self.board_size):
             for c in range(self.board_size):
+                if board[r, c] != EMPTY:
+                    continue
                 if len(threats) >= max_threats:
                     break
 
@@ -221,6 +223,8 @@ class ThreatDetector:
 
         for r in range(self.board_size):
             for c in range(self.board_size):
+                if board[r, c] != EMPTY:
+                    continue
                 if len(threats) >= max_threats:
                     break
 
@@ -342,6 +346,8 @@ class ThreatDetector:
 
         for r in range(self.board_size):
             for c in range(self.board_size):
+                if board[r, c] != EMPTY:
+                    continue
                 if len(double_threats) >= max_threats:
                     break
 
