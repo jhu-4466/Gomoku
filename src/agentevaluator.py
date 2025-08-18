@@ -161,6 +161,7 @@ class AgentEvaluator:
         depths = agent_stats["search_depths"]
         non_zero_depths = [d for d in depths if d > 0]
         avg_depth = np.mean(non_zero_depths) if non_zero_depths else 0
+        max_depth = np.max(depths) if depths else 0
 
         return {
             "Game ID": self.history["game_id"],
