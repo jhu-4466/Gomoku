@@ -78,7 +78,7 @@ SYNERGY_FACTOR = 0.5
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
     "LIVE_FOUR": {"mine": 80_000, "opp": 1_000_000},
-    "LIVE_THREE": {"mine": 30_000, "opp": 150_000},
+    "LIVE_THREE": {"mine": 40_000, "opp": 150_000},
     "RUSH_FOUR": {"mine": 10_000, "opp": 20_000},
     "SLEEPY_THREE": {"mine": 1_300, "opp": 3_000},
     "LIVE_TWO": {"mine": 1_600, "opp": 2_000},
@@ -189,54 +189,101 @@ class ThreatDetector:
         self.board_size = board_size
         self.threat_cache = ThreatCache()
 
-    def find_four_threats(self, board, player, max_threats=10):
-        """Find all positions that create four-in-a-row threats (sleep-four patterns)"""
+    def _get_candidate_points(self, board):
+        if not np.any(board):
+            center = self.board_size // 2
+            return {(center, center)}
+
+        candidate_points = set()
+        occupied_stones = np.argwhere(board != EMPTY)
+        for r, c in occupied_stones:
+            for dr, dc in MOVE_DIRECTIONS:
+                for i in range(1, 3):
+                    nr, nc = r + i * dr, c + i * dc
+                    if not (0 <= nr < self.board_size and 0 <= nc < self.board_size):
+                        break
+                    if board[nr, nc] == EMPTY:
+                        candidate_points.add((nr, nc))
+                    else:
+                        break
+
+        return list(candidate_points)
+
+    def find_four_threats(self, board, player, current_hash, max_threats=10):
+        """Find all positions that create four-in-a-row threats (live-four patterns)"""
         threats = []
 
-        for r in range(self.board_size):
-            for c in range(self.board_size):
-                if board[r, c] != EMPTY:
-                    continue
-                if len(threats) >= max_threats:
-                    break
+        candidate_points = self._get_candidate_points(board)
+        for r, c in candidate_points:
+            if len(threats) >= max_threats:
+                break
 
-                # Check cache first
-                board_hash = hash(board.tobytes())
-                cached = self.threat_cache.get(board_hash, (r, c))
-                if cached is not None:
-                    if cached:
-                        threats.append((r, c))
-                    continue
-
-                board[r, c] = player
-                is_threat = self._check_four_threat(board, r, c, player)
-                board[r, c] = EMPTY
-
-                self.threat_cache.put(board_hash, (r, c), is_threat)
-                if is_threat:
+            cached = self.threat_cache.get(current_hash, (r, c))
+            if cached is not None:
+                if cached:
                     threats.append((r, c))
+                continue
+
+            board[r, c] = player
+            is_threat = self._check_four_threat(board, r, c, player)
+            board[r, c] = EMPTY
+
+            self.threat_cache.put(current_hash, (r, c), is_threat)
+            if is_threat:
+                threats.append((r, c))
 
         return threats
 
-    def find_live_three_threats(self, board, player, max_threats=10):
-        """Find all positions that create live three threats"""
-        threats = []
+    def _count_threats_at(self, board, r, c, player):
+        board[r, c] = player
 
-        for r in range(self.board_size):
-            for c in range(self.board_size):
-                if board[r, c] != EMPTY:
-                    continue
-                if len(threats) >= max_threats:
-                    break
+        live_threes = 0
+        rush_fours = 0
 
-                board[r, c] = player
-                is_threat = self._check_live_three(board, r, c, player)
-                board[r, c] = EMPTY
+        for dr, dc in MOVE_DIRECTIONS:
+            line_str = ""
+            for i in range(-5, 6):
+                nr, nc = r + i * dr, c + i * dc
+                if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
+                    line_str += str(board[nr, nc])
+                else:
+                    line_str += "3"
 
-                if is_threat:
-                    threats.append((r, c))
+            if player == WHITE:
+                line_str = (
+                    line_str.replace("1", "X").replace("2", "1").replace("X", "2")
+                )
 
-        return threats
+            if PATTERNS_PLAYER["LIVE_THREE"].search(line_str):
+                live_threes += 1
+            if PATTERNS_PLAYER["RUSH_FOUR"].search(line_str):
+                rush_fours += 1
+
+        board[r, c] = EMPTY
+        return live_threes, rush_fours
+
+    def find_vct_threats(self, board, player, max_threats=15):
+        threats_by_type = {
+            "CRITICAL": [],  # R4+R4 or L3+R4 or L3+L3 (100% win)
+            "MAJOR": [],  # Single L3
+        }
+
+        candidate_points = self._get_candidate_points(board)
+        for r, c in candidate_points:
+            live_threes, rush_fours = self._count_threats_at(board, r, c, player)
+
+            if (
+                rush_fours >= 2
+                or (rush_fours >= 1 and live_threes >= 1)
+                or live_threes >= 2
+            ):
+                threats_by_type["CRITICAL"].append((r, c))
+            elif live_threes >= 1:
+                threats_by_type["MAJOR"].append((r, c))
+
+        critical_threats = threats_by_type["CRITICAL"]
+        major_threats = threats_by_type["MAJOR"]
+        return critical_threats[:5], major_threats[:10]
 
     def _check_patterns_at(self, board, r, c, player, pattern_names_to_check):
         directions = [
@@ -276,98 +323,13 @@ class ThreatDetector:
         three_threat_patterns = ["LIVE_THREE"]
         return self._check_patterns_at(board, r, c, player, three_threat_patterns)
 
-    def _check_urgent_threat_in_direction(self, board, r, c, player, dr, dc):
-        """Check if there's a threat in specific direction"""
-        count = 1
-
-        for i in range(1, 5):
-            nr, nc = r + i * dr, c + i * dc
-            if not (0 <= nr < self.board_size and 0 <= nc < self.board_size):
-                break
-            if board[nr, nc] != player:
-                break
-            count += 1
-
-        for i in range(1, 5):
-            nr, nc = r - i * dr, c - i * dc
-            if not (0 <= nr < self.board_size and 0 <= nc < self.board_size):
-                break
-            if board[nr, nc] != player:
-                break
-            count += 1
-
-        return count >= 4
-
-    def get_defensive_moves(self, board, threat_move, player, max_defenses):
-        """Get all moves that can defend against a threat"""
-        defensive_moves = []
-        r, c = threat_move
-        seen = set()
-
-        # Temporarily place the threat
-        board[r, c] = player
-
-        # Find critical defensive points
-        for dr, dc in MOVE_DIRECTIONS:
-            # if not self._check_urgent_threat_in_direction(board, r, c, player, dr, dc):
-            #     continue
-            # Find empty spots in the threat line
-            for i in range(-4, 5):
-                nr, nc = r + i * dr, c + i * dc
-                if not (0 <= nr < self.board_size and 0 <= nc < self.board_size):
-                    continue
-                if (nr, nc) == (r, c):
-                    continue
-                if board[nr, nc] != EMPTY:
-                    continue
-                if (nr, nc) in seen:
-                    continue
-
-                # Check if this defense actually blocks the threat
-                board[nr, nc] = 3 - player
-                still_threat = self._check_four_threat(board, r, c, player)
-                board[nr, nc] = EMPTY
-
-                if not still_threat:
-                    defensive_moves.append((nr, nc))
-                    seen.add((nr, nc))
-                    if len(defensive_moves) >= max_defenses:
-                        board[r, c] = EMPTY
-                        return defensive_moves
-
-        board[r, c] = EMPTY
-
-        # Remove duplicates and return
-        return list(set(defensive_moves))
-
-    def find_double_threats(self, board, player, max_threats=10):
-        """Find moves that create multiple threats simultaneously"""
-        double_threats = []
-
-        for r in range(self.board_size):
-            for c in range(self.board_size):
-                if board[r, c] != EMPTY:
-                    continue
-                if len(double_threats) >= max_threats:
-                    break
-
-                # Count different types of threats
-                board[r, c] = player
-                threat_count = 0
-                if self._check_four_threat(board, r, c, player):
-                    threat_count += 2
-                if self._check_live_three(board, r, c, player):
-                    threat_count += 1
-
-                board[r, c] = EMPTY
-
-                if threat_count >= 2:
-                    double_threats.append((r, c))
-
-        return double_threats
-
 
 class VCFSearcher:
+    """
+    VCF: Victory by Continuous Four(Forcing moves)
+    To check if there is a winning move routes by VCF.
+    """
+
     def __init__(self, board_size=15, agent=None):
         self.board_size = board_size
         self.threat_detector = ThreatDetector(board_size)
@@ -377,158 +339,164 @@ class VCFSearcher:
         self.agent = agent
 
         self.search_nodes = 0
-        self.max_nodes = VCF_NODE_LIMIT
         self.start_time = 0
-        self.time_limit = VCF_TIME_LIMIT
 
     def search(self, board, player, max_depth=None, time_limit=None):
         if max_depth is None:
-            max_depth = self.max_vcf_depth
+            max_depth = MAX_VCF_DEPTH
         if time_limit is None:
-            time_limit = self.time_limit
+            time_limit = VCF_TIME_LIMIT
 
         self.search_nodes = 0
         self.start_time = time.time()
         self.threat_detector.threat_cache.clear()
-
-        result = self._vcf_recursive(
-            board.copy(), player, 0, max_depth, [], set(), True
-        )
+        initial_hash = np.uint64(0)
+        for r in range(self.board_size):
+            for c in range(self.board_size):
+                if board[r, c] != EMPTY:
+                    initial_hash ^= zobrist_table[r, c, board[r, c]]
+        result = self._vcf_recursive(board.copy(), player, 0, [], set(), initial_hash)
         result.nodes_searched = self.search_nodes
         result.time_elapsed = time.time() - self.start_time
         return result
+
+    def _get_defensive_replies(self, board, attack_move, attacker_player):
+        r, c = attack_move
+        defenses = set()
+
+        for dr, dc in MOVE_DIRECTIONS:
+            line_stones = [(r, c)]
+
+            for i in range(1, 5):
+                nr, nc = r + i * dr, c + i * dc
+                if not (
+                    0 <= nr < self.board_size
+                    and 0 <= nc < self.board_size
+                    and board[nr, nc] == attacker_player
+                ):
+                    break
+                line_stones.append((nr, nc))
+
+            for i in range(1, 5):
+                nr, nc = r - i * dr, c - i * dc
+                if not (
+                    0 <= nr < self.board_size
+                    and 0 <= nc < self.board_size
+                    and board[nr, nc] == attacker_player
+                ):
+                    break
+                line_stones.append((nr, nc))
+
+            if len(line_stones) >= 4:
+                min_r, min_c = min(line_stones)
+                max_r, max_c = max(line_stones)
+
+                p1_r, p1_c = min_r - dr, min_c - dc
+                if (
+                    0 <= p1_r < self.board_size
+                    and 0 <= p1_c < self.board_size
+                    and board[p1_r, p1_c] == EMPTY
+                ):
+                    defenses.add((p1_r, p1_c))
+
+                p2_r, p2_c = max_r + dr, max_c + dc
+                if (
+                    0 <= p2_r < self.board_size
+                    and 0 <= p2_c < self.board_size
+                    and board[p2_r, p2_c] == EMPTY
+                ):
+                    defenses.add((p2_r, p2_c))
+
+        return list(defenses)
 
     def _vcf_recursive(
         self,
         board,
         player,
         depth,
-        max_depth,
         threat_sequence,
         visited_states,
-        is_attacker_turn=True,
+        current_hash,
     ):
         # Check limits
         self.search_nodes += 1
-        if self.search_nodes > self.max_nodes:
-            return VCFResult(False, depth)
-        if time.time() - self.start_time > self.time_limit:
-            return VCFResult(False, depth)
+        if (
+            depth >= MAX_VCF_DEPTH
+            or self.search_nodes > VCF_NODE_LIMIT
+            or time.time() - self.start_time > VCF_TIME_LIMIT
+        ):
+            return VCFResult(is_winning=False, depth=depth)
         if self.agent and hasattr(self.agent, "_check_timeout"):
             try:
                 self.agent._check_timeout()
-            except:
-                return VCFResult(False, depth)
+            except TimeoutException:
+                return VCFResult(is_winning=False, depth=depth)
 
-        # Cycle Detection
-        if depth >= max_depth:
-            return VCFResult(False, depth)
-        board_hash = hash(board.tobytes())
-        if board_hash in visited_states:
-            return VCFResult(False, depth)
-        visited_states.add(board_hash)
+        if current_hash in visited_states:
+            return VCFResult(is_winning=False, depth=depth)
+        visited_states.add(current_hash)
 
-        if is_attacker_turn:
-            # Attacker's turn: need ALL defenses to fail
-            four_threats = self.threat_detector.find_four_threats(
-                board, player, max_threats=5  # Limit threats examined
+        attacking_moves = self.threat_detector.find_four_threats(
+            board, player, current_hash
+        )
+        if not attacking_moves:
+            return VCFResult(False, depth)
+
+        for attack in attacking_moves:
+            board[attack[0], attack[1]] = player
+            new_threat_sequence = threat_sequence + [attack]
+            hash_after_attack = (
+                current_hash ^ zobrist_table[attack[0], attack[1], player]
             )
 
-            if not four_threats:
-                visited_states.discard(board_hash)
-                return VCFResult(False, depth)
-
-            # Try each threat (but stop early if winning)
-            for threat_move in four_threats:
-                r, c = threat_move
-                board[r, c] = player
-
-                # Check immediate win
-                if self._check_win(board, r, c, player):
-                    board[r, c] = EMPTY
-                    visited_states.discard(board_hash)
-                    return VCFResult(
-                        True, depth + 1, threat_move, threat_sequence + [threat_move]
-                    )
-
-                # Get defensive moves
-                defensive_moves = self.threat_detector.get_defensive_moves(
-                    board, threat_move, player, max_defenses=3  # Limit defenses
+            # if win directly
+            if self._check_win(board, attack[0], attack[1], player):
+                board[attack[0], attack[1]] = EMPTY
+                return VCFResult(
+                    is_winning=True,
+                    depth=depth,
+                    winning_move=attack,
+                    threat_sequence=new_threat_sequence,
+                )
+            # Otherwise, search defensive pos.
+            defensive_replies = self._get_defensive_replies(board, attack, player)
+            if not defensive_replies:
+                board[attack[0], attack[1]] = EMPTY
+                return VCFResult(
+                    is_winning=True,
+                    depth=depth,
+                    winning_move=attack,
+                    threat_sequence=new_threat_sequence,
+                )
+            # Continuously attack and defense
+            all_defenses_countered = True
+            for defense in defensive_replies:
+                board[defense[0], defense[1]] = 3 - player
+                result = self._vcf_recursive(
+                    board,
+                    player,
+                    depth + 1,
+                    new_threat_sequence,
+                    visited_states.copy(),
+                    hash_after_attack,
+                )
+                board[defense[0], defense[1]] = EMPTY
+                if not result.is_winning:
+                    all_defenses_countered = False
+                    break
+            if all_defenses_countered:
+                board[attack[0], attack[1]] = EMPTY
+                return VCFResult(
+                    is_winning=True,
+                    depth=depth,
+                    winning_move=attack,
+                    threat_sequence=new_threat_sequence,
                 )
 
-                if not defensive_moves:
-                    # No defense = win
-                    board[r, c] = EMPTY
-                    visited_states.discard(board_hash)
-                    return VCFResult(
-                        True, depth + 1, threat_move, threat_sequence + [threat_move]
-                    )
+            # Revert
+            board[attack[0], attack[1]] = EMPTY
 
-                # Check if ALL defenses fail (with early termination)
-                all_defenses_fail = True
-
-                for defense in defensive_moves:
-                    dr, dc = defense
-                    if board[dr, dc] != EMPTY:
-                        continue
-
-                    board[dr, dc] = 3 - player
-
-                    # Defender's turn
-                    result = self._vcf_recursive(
-                        board,
-                        player,
-                        depth + 2,
-                        max_depth,
-                        threat_sequence + [threat_move, defense],
-                        visited_states.copy(),
-                        True,  # Back to attacker
-                    )
-
-                    board[dr, dc] = EMPTY
-
-                    if not result.is_winning:
-                        # Found successful defense - this threat fails
-                        all_defenses_fail = False
-                        break  # PRUNING: No need to check other defenses
-
-                board[r, c] = EMPTY
-
-                if all_defenses_fail:
-                    # This threat wins!
-                    visited_states.discard(board_hash)
-                    return VCFResult(
-                        True, depth + 1, threat_move, threat_sequence + [threat_move]
-                    )
-
-        visited_states.discard(board_hash)
-        return VCFResult(False, depth)
-
-    # def _sort_threats_by_priority(self, board, threats, player):
-    #     """Sort threats by their strategic value"""
-    #     threat_scores = []
-
-    #     for threat in threats:
-    #         r, c = threat
-
-    #         # Check connectivity to existing stones
-    #         connectivity = 0
-    #         for dr in [-1, 0, 1]:
-    #             for dc in [-1, 0, 1]:
-    #                 if dr == 0 and dc == 0:
-    #                     continue
-    #                 nr, nc = r + dr, c + dc
-    #                 if (
-    #                     0 <= nr < self.board_size
-    #                     and 0 <= nc < self.board_size
-    #                     and board[nr, nc] == player
-    #                 ):
-    #                     connectivity += 1
-
-    #         threat_scores.append((threat, connectivity * 2))
-
-    #     threat_scores.sort(key=lambda x: x[1], reverse=True)
-    #     return [t[0] for t in threat_scores]
+        return VCFResult(is_winning=False, depth=depth)
 
     def _check_win(self, board, r, c, player):
         """Check if move creates a win"""
@@ -580,193 +548,165 @@ class VCTSearcher:
         Uses open threes and threat combinations
         """
         if max_depth is None:
-            max_depth = self.max_vct_depth
+            max_depth = MAX_VCT_DEPTH
         if time_limit is None:
-            time_limit = self.time_limit
+            time_limit = VCT_TIME_LIMIT
 
         self.search_nodes = 0
         self.start_time = time.time()
 
-        result = self._vct_recursive(board.copy(), player, 0, max_depth, [], set())
+        initial_hash = np.uint64(0)
+        for r in range(self.board_size):
+            for c in range(self.board_size):
+                if board[r, c] != EMPTY:
+                    initial_hash ^= zobrist_table[r, c, board[r, c]]
+        result = self._vct_recursive(board.copy(), player, 0, [], set(), initial_hash)
         result.nodes_searched = self.search_nodes
         result.time_elapsed = time.time() - self.start_time
         return result
 
     def _vct_recursive(
-        self, board, player, depth, max_depth, threat_sequence, visited_states
+        self,
+        board,
+        player,
+        depth,
+        threat_sequence,
+        visited_states,
+        current_hash,
     ):
         """Recursive VCT search"""
         # Check limits
         self.search_nodes += 1
-        if self.search_nodes > self.max_nodes:
-            return VCTResult(False, depth)
-        if time.time() - self.start_time > self.time_limit:
-            return VCTResult(False, depth)
+        if (
+            depth >= MAX_VCT_DEPTH
+            or self.search_nodes > self.max_nodes
+            or time.time() - self.start_time > VCT_TIME_LIMIT
+        ):
+            return VCTResult(is_winning=False, depth=depth)
+
         if self.agent and hasattr(self.agent, "_check_timeout"):
             try:
                 self.agent._check_timeout()
-            except:
-                return VCTResult(False, depth)
+            except TimeoutException:
+                return VCTResult(is_winning=False, depth=depth)
 
-        if depth >= max_depth:
-            return VCTResult(False, depth)
+        if current_hash in visited_states:
+            return VCTResult(is_winning=False, depth=depth)
+        visited_states.add(current_hash)
 
-        # Transition to VCF
-        vcf_result = self.vcf_searcher.search(board, player, max_depth=4)
+        # Transition to VCF, if vcf successfully, means that this round successes.
+        vcf_result = self.vcf_searcher.search(board, player)
         if vcf_result.is_winning:
             return VCTResult(
-                True,
-                depth + vcf_result.depth,
-                vcf_result.winning_move,
-                threat_sequence + vcf_result.threat_sequence,
+                is_winning=True,
+                depth=depth + vcf_result.depth,
+                winning_move=vcf_result.winning_move,
+                threat_sequence=threat_sequence + vcf_result.threat_sequence,
             )
 
-        # Cycle detection
-        board_hash = hash(board.tobytes())
-        if board_hash in visited_states:
-            return VCTResult(False, depth)
-        visited_states.add(board_hash)
-
-        # Find different types of threats
-        three_threats = self.threat_detector.find_live_three_threats(
-            board, player, max_threats=5
+        critical_threats, major_threats = self.threat_detector.find_vct_threats(
+            board, player
         )
-        double_threats = self.threat_detector.find_double_threats(board, player)
-        all_threats = []
-        threat_set = set()
-        for threat in double_threats:
-            if threat not in threat_set:
-                all_threats.append(threat)
-                threat_set.add(threat)
-        for threat in three_threats:
-            if threat not in threat_set and len(all_threats) < 8:
-                all_threats.append(threat)
-                threat_set.add(threat)
-        if not all_threats:
-            visited_states.discard(board_hash)
-            return VCTResult(False, depth)
-
-        # Sort threats by priority
-        for threat_move in all_threats[:6]:  # Limit to 6 best threats
-            r, c = threat_move
-            board[r, c] = player
-
-            # Check win
-            if self.vcf_searcher._check_win(board, r, c, player):
-                board[r, c] = EMPTY
-                visited_states.discard(board_hash)
-                return VCTResult(
-                    True, depth + 1, threat_move, threat_sequence + [threat_move]
-                )
-
-            # Get defensive moves - more comprehensive for VCT
-            defensive_moves = self.threat_detector.get_defensive_moves(
-                board, threat_move, player, max_defenses=4
+        if critical_threats:
+            winning_move = critical_threats[0]
+            new_threat_sequence = threat_sequence + [winning_move]
+            return VCTResult(
+                is_winning=True,
+                depth=depth,
+                winning_move=winning_move,
+                threat_sequence=new_threat_sequence,
             )
+        if not major_threats:
+            return VCTResult(is_winning=False, depth=depth)  # 没有任何进攻点
+        for attack in major_threats:
+            r_att, c_att = attack
+            board[r_att, c_att] = player
+            hash_after_attack = current_hash ^ zobrist_table[r_att, c_att, player]
+            new_threat_sequence = threat_sequence + [attack]
 
-            # For double threats, we might need to consider more defenses
-            if threat_move in double_threats:
-                additional_defenses = self._get_multi_threat_defenses(
-                    board, threat_move, player
-                )
-                for def_move in additional_defenses:
-                    if def_move not in defensive_moves and len(defensive_moves) < 5:
-                        defensive_moves.append(def_move)
-
-            if not defensive_moves:
-                # No defense = win
-                board[r, c] = EMPTY
-                visited_states.discard(board_hash)
+            defensive_replies = self._get_vct_defensive_replies(board, attack, player)
+            if not defensive_replies:
+                board[r_att, c_att] = EMPTY
                 return VCTResult(
-                    True, depth + 1, threat_move, threat_sequence + [threat_move]
+                    is_winning=True,
+                    depth=depth,
+                    winning_move=attack,
+                    threat_sequence=new_threat_sequence,
                 )
-
-            # Too many defenses = not forcing enough for VCT
-            if len(defensive_moves) > 5:
-                board[r, c] = EMPTY
-                continue
-
-            # Check if all defenses fail
-            all_defenses_fail = True
-
-            for defense in defensive_moves[:3]:  # Check top 3 defenses
-                dr, dc = defense
-                if board[dr, dc] != EMPTY:
-                    continue
-
-                board[dr, dc] = 3 - player
+            all_defenses_countered = True
+            for defense in defensive_replies:
+                r_def, c_def = defense
+                board[r_def, c_def] = 3 - player
+                hash_after_defense = (
+                    hash_after_attack ^ zobrist_table[r_def, c_def, 3 - player]
+                )
 
                 result = self._vct_recursive(
                     board,
                     player,
-                    depth + 2,
-                    max_depth,
-                    threat_sequence + [threat_move, defense],
+                    depth + 1,
+                    new_threat_sequence,
                     visited_states.copy(),
+                    hash_after_defense,
                 )
 
-                board[dr, dc] = EMPTY
+                board[r_def, c_def] = EMPTY
 
                 if not result.is_winning:
-                    all_defenses_fail = False
-                    break  # Pruning: one successful defense is enough
-
-            board[r, c] = EMPTY
-
-            if all_defenses_fail:
-                visited_states.discard(board_hash)
+                    all_defenses_countered = False
+                    break
+            if all_defenses_countered:
+                board[r_att, c_att] = EMPTY
                 return VCTResult(
-                    True, depth + 1, threat_move, threat_sequence + [threat_move]
+                    is_winning=True,
+                    depth=depth,
+                    winning_move=attack,
+                    threat_sequence=new_threat_sequence,
                 )
 
-        visited_states.discard(board_hash)
-        return VCTResult(False, depth)
+            board[r_att, c_att] = EMPTY
 
-    def _get_multi_threat_defenses(self, board, threat_move, player):
-        """
-        Get defensive moves specifically for multi-threat situations
-        These are positions that might defend against multiple threats at once
-        """
-        r, c = threat_move
-        defenses = []
+        return VCTResult(is_winning=False, depth=depth)
 
-        # Check intersections of threat lines
+    def _get_vct_defensive_replies(self, board, attack_move, attacker_player):
+        """
+        Get defensive replies for a given threat move
+        """
+        defenses = set()
+
+        board[attack_move[0], attack_move[1]] = attacker_player
         for dr, dc in MOVE_DIRECTIONS:
-            # Look for key defensive points
-            for i in [-2, -1, 1, 2]:
-                nr, nc = r + i * dr, c + i * dc
-                if (
-                    0 <= nr < self.board_size
-                    and 0 <= nc < self.board_size
-                    and board[nr, nc] == EMPTY
-                ):
-                    # Check if this position defends multiple threats
-                    board[nr, nc] = 3 - player
+            line_str = ""
+            center_idx = -1
+            for i in range(-5, 6):
+                if i == 0:
+                    center_idx = len(line_str)
+                nr, nc = attack_move[0] + i * dr, attack_move[1] + i * dc
+                if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
+                    line_str += str(board[nr, nc])
+                else:
+                    line_str += "3"
 
-                    # Quick check if it reduces threat level
-                    is_still_double = False
-                    board[r, c] = player  # Temporarily place threat
+            if attacker_player == WHITE:
+                line_str = (
+                    line_str.replace("1", "X").replace("2", "1").replace("X", "2")
+                )
+            for match in re.finditer(PATTERNS_PLAYER["LIVE_THREE"], line_str):
+                if not (match.start() <= center_idx < match.end()):
+                    continue
 
-                    if self.threat_detector._check_four_threat(
-                        board, r, c, player
-                    ) or self.threat_detector._check_live_three(board, r, c, player):
-                        # Count remaining threats
-                        threat_count = 0
-                        if self.threat_detector._check_four_threat(board, r, c, player):
-                            threat_count += 2
-                        if self.threat_detector._check_live_three(board, r, c, player):
-                            threat_count += 1
+                matched_pattern = match.group(0)
+                match_start_idx = match.start()
 
-                        if threat_count >= 2:
-                            is_still_double = True
+                for i, char in enumerate(matched_pattern):
+                    if char == "0":
+                        abs_idx = match_start_idx + i
+                        r_def = attack_move[0] + (abs_idx - center_idx) * dr
+                        c_def = attack_move[1] + (abs_idx - center_idx) * dc
+                        defenses.add((r_def, c_def))
 
-                    board[r, c] = EMPTY
-                    board[nr, nc] = EMPTY
-
-                    if not is_still_double:
-                        defenses.append((nr, nc))
-
-        return defenses[:3]
+        board[attack_move[0], attack_move[1]] = EMPTY
+        return defenses
 
 
 class IncrementalEvaluator:
@@ -909,7 +849,6 @@ class NegamaxAgent:
         # Timeout
         self.safety_buffer = 0.2
         self.max_search_time = TIME_LIMIT - self.safety_buffer
-        self.panic_mode = False
 
     def _load_joseki(self, joseki_file="josekis.json"):
         """Loads the joseki book from a JSON file."""
@@ -1214,96 +1153,98 @@ class NegamaxAgent:
             synergy_score += defensive_sum_opp * 0.3
         return synergy_score
 
-    def get_possible_moves(self, player, banned_moves_enabled, depth, hash_move):
+    def get_possible_moves(
+        self, player, banned_moves_enabled, depth, hash_move, current_hash
+    ):
         """
         Uses a sophisticated, multi-layered sorting approach,
         including static threat analysis, to achieve
         Threat Space Search.
         """
-        # board_hash = self._compute_hash(player)
-        # tt_entry = self.transposition_table.get(board_hash)
-        # if tt_entry and "sorted_moves" in tt_entry:
-        #     return tt_entry["sorted_moves"]
-
-        moves = self._get_candidate_moves(player, banned_moves_enabled)
-        if not moves:
-            return []
-
-        # Categorize moves by threat type
-        vcf_threats = []
-        vct_threats = []
-        defensive_vcf = []
-        defensive_vct = []
-        regular_moves = []
-
         opponent = 3 - player
-        for move in moves:
-            r, c = move
-            is_vcf_threat = False
-            is_vct_threat = False
-            is_defensive = False
 
-            # Check if move creates VCF threat
-            self.board[r, c] = player
-            if self.threat_detector._check_four_threat(self.board, r, c, player):
-                vcf_threats.append(move)
-                is_vcf_threat = True
-            elif self.threat_detector._check_live_three(self.board, r, c, player):
-                vct_threats.append(move)
-                is_vct_threat = True
-            self.board[r, c] = EMPTY
+        # --- 1. Light VCT/VCF check ---
+        my_four_threats = self.threat_detector.find_four_threats(
+            self.board, player, current_hash
+        )
+        my_critical_vct, my_major_vct = self.threat_detector.find_vct_threats(
+            self.board, player
+        )
+        opponent_hash = current_hash ^ zobrist_player_turn
+        opp_four_threats = self.threat_detector.find_four_threats(
+            self.board, opponent, opponent_hash
+        )
+        opp_critical_vct, opp_major_vct = self.threat_detector.find_vct_threats(
+            self.board, opponent
+        )
 
-            # Check if move blocks opponent's threat
-            if not is_vcf_threat and not is_vct_threat:
-                self.board[r, c] = opponent
-                if self.threat_detector._check_four_threat(self.board, r, c, opponent):
-                    defensive_vcf.append(move)
-                    is_defensive = True
-                elif self.threat_detector._check_live_three(self.board, r, c, opponent):
-                    defensive_vct.append(move)
-                    is_defensive = True
-                self.board[r, c] = EMPTY
-
-            if not is_vcf_threat and not is_vct_threat and not is_defensive:
-                regular_moves.append(move)
-
-        # Order moves by priority
+        # --- 2. Assemble the move list based on a strict priority hierarchy ---
         ordered_moves = []
+        seen_moves = set()
 
-        # 1. Hash move (from transposition table)
-        if hash_move and hash_move in moves:
-            ordered_moves.append(hash_move)
-            moves.remove(hash_move)
-        # 2. VCF defensive moves
-        ordered_moves.extend(defensive_vcf)
-        # 3. VCF offensive threats
-        ordered_moves.extend(vcf_threats)
-        # 4. VCT defensive moves
-        ordered_moves.extend(defensive_vct)
-        # 5. VCT offensive threats
-        ordered_moves.extend(vct_threats)
-        # 6. Killer moves
+        def add_move(move):
+            if (
+                move
+                and move not in seen_moves
+                and self.board[move[0], move[1]] == EMPTY
+            ):
+                ordered_moves.append(move)
+                seen_moves.add(move)
+
+        # Priority 1: My immediate win (make a five)
+        for move in my_four_threats:
+            self.board[move] = player
+            if self._check_win_by_move(move[0], move[1], player):
+                self.board[move] = EMPTY
+                # This is the only move that matters. Search it and nothing else.
+                return [move]
+            self.board[move] = EMPTY
+        # Priority 2: Block opponent's immediate win
+        for move in opp_four_threats:
+            add_move(move)
+        # Priority 4: Block opponent's VCT threats
+        for move in opp_major_vct:
+            defenses = self.vct_searcher._get_vct_defensive_replies(
+                self.board, move, opponent
+            )
+            for d_move in defenses:
+                add_move(d_move)
+        # Priority 3: My "unstoppable" critical VCT threats
+        for move in my_critical_vct:
+            add_move(move)
+        # Priority 6: My other four-threats
+        for move in my_four_threats:
+            add_move(move)
+        # Priority 7: My major VCT threats (single live-threes)
+        for move in my_major_vct:
+            add_move(move)
+        # Priority 5: Hash move (from transposition table)
+        add_move(hash_move)
+        # Priority 8: Killer moves
         if depth < len(self.killer_moves):
-            for killer in self.killer_moves[depth]:
-                if killer and killer in regular_moves:
-                    ordered_moves.append(killer)
-                    regular_moves.remove(killer)
-        # 7. Regular moves sorted by evaluation
-        if regular_moves:
-            move_scores = []
-            for move in regular_moves:
+            add_move(self.killer_moves[depth][0])
+            add_move(self.killer_moves[depth][1])
+
+        # --- 3. Add remaining general moves, sorted by heuristic score ---
+        # Get all candidate points and filter out the high-priority ones we've already added
+        general_moves = self._get_candidate_moves(self.board, banned_moves_enabled)
+        move_scores = []
+        for move in general_moves:
+            if move not in seen_moves:
                 r, c = move
+                # Calculate score using the lightweight incremental evaluator + synergy
                 self.board[r, c] = player
                 self.evaluator.update_score(self.board, r, c, player)
                 score = self.evaluator.get_current_score(
                     player
                 ) + self._calculate_synergy_at(r, c, player)
                 self.board[r, c] = EMPTY
-                self.evaluator.update_score(self.board, r, c, EMPTY)
+                self.evaluator.update_score(self.board, r, c, EMPTY)  # Revert score
                 move_scores.append((move, score))
 
-            move_scores.sort(key=lambda x: x[1], reverse=True)
-            ordered_moves.extend([m[0] for m in move_scores])
+        move_scores.sort(key=lambda x: x[1], reverse=True)
+        for move, score in move_scores:
+            add_move(move)
 
         # Apply depth-based pruning
         if (
@@ -1316,49 +1257,6 @@ class NegamaxAgent:
             ]
 
         return ordered_moves
-
-    def negamax_with_vcf_vct(self, depth, alpha, beta, player, banned_moves_enabled):
-        """
-        Enhanced negamax with VCF/VCT integration
-        VCF: Victory by Continuous Four
-        VCT: Victory by Continuous Three
-        """
-        self._check_timeout()
-
-        # Check VCF at higher depths
-        if depth > 2 and self.current_search_depth > 3:
-            self.vcf_checks += 1
-            vcf_result = self.vcf_searcher.search(
-                self.board, player, min(MAX_VCF_DEPTH, depth)
-            )
-            if vcf_result.is_winning:
-                self.vcf_wins_found += 1
-                logger.info(
-                    f"[Turn {self.current_turn}] VCF win found at depth {depth}"
-                )
-                return (
-                    SCORE_TABLE["FIVE"]["mine"] - vcf_result.depth,
-                    vcf_result.winning_move,
-                )
-
-        # Check VCT at even higher depths
-        if depth > 4 and self.current_search_depth > 5:
-            self.vct_checks += 1
-            vct_result = self.vct_searcher.search(
-                self.board, player, min(MAX_VCT_DEPTH, depth // 2)
-            )
-            if vct_result.is_winning:
-                self.vct_wins_found += 1
-                logger.info(
-                    f"[Turn {self.current_turn}] VCT win found at depth {depth}"
-                )
-                return (
-                    SCORE_TABLE["FIVE"]["mine"] - vct_result.depth - VCT_PENALTY,
-                    vct_result.winning_move,
-                )
-
-        # Standard negamax
-        return self.negamax(depth, alpha, beta, player, banned_moves_enabled)
 
     def negamax(
         self, depth, alpha, beta, player, banned_moves_enabled, current_hash=None
@@ -1387,7 +1285,9 @@ class NegamaxAgent:
         original_alpha = alpha
         best_move, max_score = None, -float("inf")
         hash_move = tt_entry.get("move") if tt_entry else None
-        moves = self.get_possible_moves(player, banned_moves_enabled, depth, hash_move)
+        moves = self.get_possible_moves(
+            player, banned_moves_enabled, depth, hash_move, current_hash
+        )
         if not moves:
             return 0, None
 
@@ -1494,7 +1394,7 @@ class NegamaxAgent:
             return [(self.board_size // 2, self.board_size // 2)]
 
         moves = set()
-        radius = 2  # Search radius around existing stones
+        radius = 1
         rows, cols = np.where(self.board != EMPTY)
 
         for r, c in zip(rows, cols):
@@ -1522,17 +1422,12 @@ class NegamaxAgent:
         self.start_time = time.time()
         self.search_generation += 1
         self.killer_moves = [[None, None] for _ in range(MAX_DEPTH + 1)]
-        self.panic_mode = False
 
         best_move_so_far = None
         final_search_depth = 0
+        current_hash = self._compute_hash(player)
 
-        self.vcf_checks = 0
-        self.vct_checks = 0
-        self.vcf_wins_found = 0
-        self.vct_wins_found = 0
-
-        # 1st Priority: Check for VCF win at root
+        # 1st Priority: Check for immediate win, have to win if you can win
         candidate_moves = self._get_candidate_moves(player, banned_moves_enabled)
         my_win_moves = [
             m for m in candidate_moves if self._check_win_by_move(m[0], m[1], player)
@@ -1552,50 +1447,106 @@ class NegamaxAgent:
             )
             return opponent_win_moves[0], 0
 
-        # 2nd Priority: Check for VCF win at root
-        # My View
-        vcf_result = self.vcf_searcher.search(self.board, player, MAX_VCF_DEPTH)
-        if vcf_result.is_winning:
-            logger.info(
-                f"[Turn {self.current_turn}] VCF win found! Sequence: {vcf_result.threat_sequence}"
-            )
-            return vcf_result.winning_move, 0
-        # Opponent's View
-        opponent = 3 - player
-        opp_vcf = self.vcf_searcher.search(self.board, opponent, MAX_VCF_DEPTH)
-        if opp_vcf.is_winning:
-            logger.info(f"[Turn {self.current_turn}] Opponent has VCF! Must defend")
-            defensive_moves = self.threat_detector.get_defensive_moves(
-                self.board, opp_vcf.winning_move, opponent, max_defenses=3
-            )
-            if defensive_moves:
-                return defensive_moves[0], 0
-
         # Normal search: IDDFS - Iterative Deepening Depth-First Search
         for depth in range(1, MAX_DEPTH + 1):
             try:
                 self.current_search_depth = depth
-                logger.info(f"--- Starting search at depth {depth} ---")
+                # VCF/VCT Check
+                logger.info(f"--- Starting VCF/VCT check at depth {depth} ---")
+                # Opponent's VCF
+                opp_vcf = self.vcf_searcher.search(self.board, opponent)
+                if opp_vcf.is_winning:
+                    logger.info(
+                        f"[Turn {self.current_turn}] Opponent's VCF win detected. Finding defense."
+                    )
+                    defensive_moves = self.vcf_searcher._get_defensive_replies(
+                        self.board, opp_vcf.winning_move, opponent
+                    )
+                    if defensive_moves:
+                        best_defense_move = None
+                        best_defense_score = -float("inf")
+                        for move in defensive_moves:
+                            r, c = move
 
-                score, move = self.negamax_with_vcf_vct(
+                            self.board[r, c] = player
+                            score = self._calculate_synergy_at(r, c, player)
+                            self.board[r, c] = EMPTY
+
+                            if score > best_defense_score:
+                                best_defense_score = score
+                                best_defense_move = move
+
+                        best_move_so_far = best_defense_move
+                        final_search_depth = depth
+                        logger.info(
+                            f"[Turn {self.current_turn}] Found necessary defense {best_move_so_far[0] + 1, best_move_so_far[1] + 1} that score is {best_defense_score}. Halting."
+                        )
+                        break
+                    else:
+                        logger.warning(
+                            f"[Turn {self.current_turn}] Opponent has an unstoppable VCF."
+                        )
+                # My VCF
+                my_vcf = self.vcf_searcher.search(self.board, player, MAX_VCF_DEPTH)
+                if my_vcf.is_winning:
+                    logger.info(
+                        f"[Turn {self.current_turn}] My VCF win found at root during depth {depth}. Halting search."
+                    )
+                    best_move_so_far = my_vcf.winning_move
+                    final_search_depth = depth
+                    break
+                # 3. Opponent's VCT
+                opp_vct = self.vct_searcher.search(self.board, opponent, MAX_VCT_DEPTH)
+                if opp_vct.is_winning:
+                    logger.info(
+                        f"[Turn {self.current_turn}] Opponent's VCT win detected. Finding defense."
+                    )
+                    defensive_moves = self.vct_searcher._get_vct_defensive_replies(
+                        self.board, opp_vct.winning_move, opponent
+                    )
+                    if defensive_moves:
+                        best_defense_move = None
+                        best_defense_score = -float("inf")
+                        for move in defensive_moves:
+                            r, c = move
+
+                            self.board[r, c] = player
+                            score = self._calculate_synergy_at(r, c, player)
+                            self.board[r, c] = EMPTY
+
+                            if score > best_defense_score:
+                                best_defense_score = score
+                                best_defense_move = move
+
+                        best_move_so_far = best_defense_move
+                        final_search_depth = depth
+                        logger.info(
+                            f"[Turn {self.current_turn}] Found necessary defense {best_move_so_far[0] + 1, best_move_so_far[1] + 1} that score is {best_defense_score}. Halting."
+                        )
+                        break
+                # 4. My VCT
+                my_vct = self.vct_searcher.search(self.board, player, MAX_VCT_DEPTH)
+                if my_vct.is_winning:
+                    logger.info(
+                        f"[Turn {self.current_turn}] My VCT win found at root during depth {depth}. Halting search."
+                    )
+                    best_move_so_far = my_vct.winning_move
+                    final_search_depth = depth
+                    break
+
+                # Negamax search
+                logger.info(f"--- Starting search at depth {depth} ---")
+                score, move = self.negamax(
                     depth, -float("inf"), float("inf"), player, banned_moves_enabled
                 )
-                if move:
+                if move and depth % 2 != 0:
                     best_move_so_far = move
                 final_search_depth = depth
 
                 elapsed_time = time.time() - self.start_time
                 logger.info(
-                    f"[Turn {self.current_turn}] Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move}, Score: {score}"
+                    f"[Turn {self.current_turn}] Depth {depth} finished in {elapsed_time:.2f}s. Best move: {move[0] + 1, move[1] + 1}, Score: {score}"
                 )
-
-                # Panic mode
-                if score < -SCORE_TABLE["LIVE_FOUR"]["opp"] and not self.panic_mode:
-                    self.panic_mode = True
-                    self.max_search_time = min(
-                        TIME_LIMIT - 0.5, self.max_search_time * 1.5
-                    )
-                    logger.info("PANIC MODE: Extending search time")
 
                 # Found forced win
                 if score >= SCORE_TABLE["FIVE"]["mine"] - MAX_DEPTH:
@@ -1635,7 +1586,6 @@ class NegamaxAgent:
 
         self.transposition_table.clear()
         self.evaluator.full_recalc(self.board)
-        self.panic_mode = False
         logger.info("New game signal received. Transposition table has been cleared.")
 
     def _check_timeout(self):
@@ -1726,7 +1676,7 @@ def get_move():
         opening_move = agent.find_opening_move(color_to_play)
         if opening_move:
             logger.info(
-                f"Normal Phase: Opening book move found: {opening_move}. Returning immediately."
+                f"Normal Phase: Opening book move found: {opening_move[0] + 1, opening_move[1] + 1}. Returning immediately."
             )
             return jsonify(
                 {
@@ -1739,7 +1689,9 @@ def get_move():
         best_move, search_depth = agent.find_best_move(
             board, color_to_play, banned_moves_enabled
         )
-        logger.info(f"Move found: {best_move} at depth {search_depth}")
+        logger.info(
+            f"Move found: {best_move[0] + 1, best_move[1] + 1} at depth {search_depth}"
+        )
         return jsonify(
             {
                 "move": [int(best_move[0]), int(best_move[1])],
