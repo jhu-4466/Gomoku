@@ -316,7 +316,7 @@ class ThreatDetector:
         return False
 
     def _check_four_threat(self, board, r, c, player):
-        four_threat_patterns = ["LIVE_FOUR", "RUSH_FOUR"]
+        four_threat_patterns = ["LIVE_FOUR"]
         return self._check_patterns_at(board, r, c, player, four_threat_patterns)
 
     def _check_live_three(self, board, r, c, player):
@@ -1200,8 +1200,15 @@ class NegamaxAgent:
                 return [move]
             self.board[move] = EMPTY
         # Priority 2: Block opponent's immediate win
-        for move in opp_four_threats:
-            add_move(move)
+        if opp_four_threats:
+            return opp_four_threats
+        # Priority 3: My "unstoppable" critical VCT threats
+        if my_critical_vct:
+            return my_critical_vct
+        # Priority 6: My other four-threats
+        if my_four_threats:
+            return my_four_threats
+
         # Priority 4: Block opponent's VCT threats
         for move in opp_major_vct:
             defenses = self.vct_searcher._get_vct_defensive_replies(
@@ -1209,12 +1216,6 @@ class NegamaxAgent:
             )
             for d_move in defenses:
                 add_move(d_move)
-        # Priority 3: My "unstoppable" critical VCT threats
-        for move in my_critical_vct:
-            add_move(move)
-        # Priority 6: My other four-threats
-        for move in my_four_threats:
-            add_move(move)
         # Priority 7: My major VCT threats (single live-threes)
         for move in my_major_vct:
             add_move(move)
