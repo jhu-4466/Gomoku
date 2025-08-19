@@ -289,10 +289,8 @@ class ThreatDetector:
                 or live_threes >= 2
                 or live_fours >= 1
             ):
-                if live_fours >= 1:
-                    threats_by_type["CRITICAL"].insert(0, (r, c))
-                    break
                 threats_by_type["CRITICAL"].append((r, c))
+                break
             elif live_threes >= 1:
                 threats_by_type["MAJOR"].append((r, c))
 
