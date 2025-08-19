@@ -293,7 +293,7 @@ class ThreatDetector:
                     threats_by_type["CRITICAL"].insert(0, (r, c))
                     break
                 threats_by_type["CRITICAL"].append((r, c))
-            elif live_threes >= 1 or (live_twos >= 1 and sleepy_threes >= 1):
+            elif live_threes >= 1:
                 threats_by_type["MAJOR"].append((r, c))
 
         critical_threats = threats_by_type["CRITICAL"]
@@ -1556,9 +1556,7 @@ class NegamaxAgent:
             self.board[r, c] = opponent_player
 
             live_fours = 0
-            rush_fours = 0
             live_threes = 0
-            sleepy_threes = 0
             live_twos = 0
 
             for dr, dc in MOVE_DIRECTIONS:
@@ -1582,18 +1580,12 @@ class NegamaxAgent:
                     live_fours += 1
                 if PATTERNS_PLAYER["LIVE_THREE"].search(normalized_line):
                     live_threes += 1
-                if PATTERNS_PLAYER["SLEEPY_THREE"].search(normalized_line):
-                    sleepy_threes += 1
                 if PATTERNS_PLAYER["LIVE_TWO"].search(normalized_line):
                     live_twos += 1
 
             if live_fours > 0 or live_threes >= 2:
                 block_moves.append((r, c))
             elif live_threes > 0:
-                block_moves.append((r, c))
-            elif live_twos > 0 and sleepy_threes > 0:
-                block_moves.append((r, c))
-            elif live_twos > 0 and live_twos > 0:
                 block_moves.append((r, c))
 
             self.board[r, c] = EMPTY
