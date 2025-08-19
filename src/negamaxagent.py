@@ -240,6 +240,8 @@ class ThreatDetector:
         live_threes = 0
         rush_fours = 0
         live_fours = 0
+        live_twos = 0
+        sleepy_threes = 0
 
         for dr, dc in MOVE_DIRECTIONS:
             line_str = ""
@@ -261,9 +263,13 @@ class ThreatDetector:
                 rush_fours += 1
             if PATTERNS_PLAYER["LIVE_FOUR"].search(line_str):
                 live_fours += 1
+            if PATTERNS_PLAYER["LIVE_TWO"].search(line_str):
+                live_twos += 1
+            if PATTERNS_PLAYER["SLEEPY_THREE"].search(line_str):
+                sleepy_threes += 1
 
         board[r, c] = EMPTY
-        return live_threes, rush_fours, live_fours
+        return live_threes, rush_fours, live_fours, live_twos, sleepy_threes
 
     def find_vct_threats(self, board, player, max_threats=15):
         threats_by_type = {
@@ -273,8 +279,8 @@ class ThreatDetector:
 
         candidate_points = self._get_candidate_points(board)
         for r, c in candidate_points:
-            live_threes, rush_fours, live_fours = self._count_threats_at(
-                board, r, c, player
+            live_threes, rush_fours, live_fours, live_twos, sleepy_threes = (
+                self._count_threats_at(board, r, c, player)
             )
 
             if (
@@ -287,7 +293,7 @@ class ThreatDetector:
                     threats_by_type["CRITICAL"].insert(0, (r, c))
                     break
                 threats_by_type["CRITICAL"].append((r, c))
-            elif live_threes >= 1:
+            elif live_threes >= 1 or (live_twos >= 1 and sleepy_threes >= 1):
                 threats_by_type["MAJOR"].append((r, c))
 
         critical_threats = threats_by_type["CRITICAL"]
@@ -562,7 +568,7 @@ class VCTSearcher:
         scored = []
         for r, c in candidate_moves:
             board[r, c] = player
-            live_threes, rush_fours, live_fours = (
+            live_threes, rush_fours, live_fours, _, _ = (
                 self.threat_detector._count_threats_at(board, r, c, player)
             )
             board[r, c] = EMPTY
@@ -1552,6 +1558,8 @@ class NegamaxAgent:
             live_fours = 0
             rush_fours = 0
             live_threes = 0
+            sleepy_threes = 0
+            live_twos = 0
 
             for dr, dc in MOVE_DIRECTIONS:
                 line_str_list = []
@@ -1574,10 +1582,16 @@ class NegamaxAgent:
                     live_fours += 1
                 if PATTERNS_PLAYER["LIVE_THREE"].search(normalized_line):
                     live_threes += 1
+                if PATTERNS_PLAYER["SLEEPY_THREE"].search(normalized_line):
+                    sleepy_threes += 1
+                if PATTERNS_PLAYER["LIVE_TWO"].search(normalized_line):
+                    live_twos += 1
 
             if live_fours > 0 or live_threes >= 2:
                 block_moves.append((r, c))
             elif live_threes > 0:
+                block_moves.append((r, c))
+            elif live_twos > 0 and sleepy_threes > 0:
                 block_moves.append((r, c))
 
             self.board[r, c] = EMPTY
