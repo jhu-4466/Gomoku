@@ -77,9 +77,9 @@ to force the AI to block critical threats instead of making risky offensive move
 SYNERGY_FACTOR = 0.5
 SCORE_TABLE = {
     "FIVE": {"mine": 100_000_000, "opp": 200_000_000},
-    "LIVE_FOUR": {"mine": 120_000, "opp": 1_000_000},
-    "LIVE_THREE": {"mine": 80_000, "opp": 150_000},
-    "RUSH_FOUR": {"mine": 10_000, "opp": 20_000},
+    "LIVE_FOUR": {"mine": 100_000, "opp": 1_000_000},
+    "LIVE_THREE": {"mine": 65_000, "opp": 300_000},
+    "RUSH_FOUR": {"mine": 10_000, "opp": 50_000},
     "SLEEPY_THREE": {"mine": 1_300, "opp": 3_000},
     "LIVE_TWO": {"mine": 1_600, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 150},
@@ -94,7 +94,7 @@ PATTERNS_PLAYER = {
     "RUSH_FOUR": re.compile(r"211110|011112|10111|11011|11101"),
     "LIVE_THREE": re.compile(r"01110|010110|011010"),
     "SLEEPY_THREE": re.compile(r"21110|01112|210110|011012|21101|10112"),
-    "LIVE_TWO": re.compile(r"00110|01100|01010"),
+    "LIVE_TWO": re.compile(r"001100|01100|01010"),
     "SLEEPY_TWO": re.compile(r"2110|0112|21010|01012"),
 }
 
