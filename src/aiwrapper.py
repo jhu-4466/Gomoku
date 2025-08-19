@@ -115,37 +115,46 @@ class AgentWrapper:
 
 # --- Helper Function for Move Adjustment ---
 def find_nearest_empty_spot(board, x, y):
-    """
-    Finds the nearest empty spot on the board to a given (x, y) coordinate.
-    Searches in an expanding spiral pattern.
-    Assumes 0 is an empty spot.
-    """
     board_size = len(board)
-    # Clamp the initial coordinates to be within the valid 0-based index range
+    if not board_size or not len(board[0]):
+        return None
+
     clamped_x = max(0, min(x, board_size - 1))
     clamped_y = max(0, min(y, board_size - 1))
 
-    # Check the clamped spot first
-    if board[clamped_y][clamped_x] == 0:
+    if board[clamped_x][clamped_y] == 0:
         return [clamped_x, clamped_y]
-
-    # Search in an expanding radius (spiral search)
     for r in range(1, board_size):
-        # Iterate over the perimeter of a square of radius r
+
+        def check_and_return(cx, cy):
+            if 0 <= cx < board_size and 0 <= cy < board_size:
+                if board[cy][cx] == 0:
+                    return [cx, cy]
+            return None
+
         for i in range(-r, r + 1):
-            for j in range(-r, r + 1):
-                # Only check the points on the perimeter, not the inside
-                if abs(i) != r and abs(j) != r:
-                    continue
+            # top
+            spot = check_and_return(clamped_x + i, clamped_y - r)
+            if spot:
+                return spot
 
-                check_x, check_y = clamped_x + i, clamped_y + j
+            # bottom
+            spot = check_and_return(clamped_x + i, clamped_y + r)
+            if spot:
+                return spot
 
-                # Check if the point is within board boundaries
-                if 0 <= check_x < board_size and 0 <= check_y < board_size:
-                    if board[check_y][check_x] == 0:
-                        return [check_x, check_y]
+        for i in range(-r + 1, r):
+            # left
+            spot = check_and_return(clamped_x - r, clamped_y + i)
+            if spot:
+                return spot
 
-    return None  # Should not happen unless the board is full
+            # right
+            spot = check_and_return(clamped_x + r, clamped_y + i)
+            if spot:
+                return spot
+
+    return None
 
 
 # --- Flask Web Server Setup ---
