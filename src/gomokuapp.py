@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
     QSlider,
+    QComboBox,
 )
 from PyQt5.QtGui import QImage, QPainter, QFont, QColor
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QThread
@@ -35,6 +36,29 @@ import time
 import json
 from datetime import datetime
 from collections import defaultdict
+import socket
+import subprocess
+
+
+# Helper functions
+def find_available_port(start_port=5001, max_tries=100):
+    for port in range(start_port, start_port + max_tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                print(f"Port {port} is in use, trying next one.")
+                continue
+    return None
+
+
+def find_executable(model_path):
+    for root, dirs, files in os.walk(model_path):
+        for file in files:
+            if file.lower().endswith(".exe"):
+                return os.path.join(root, file)
+    return None
 
 
 # Board attributes (15x15)
@@ -876,12 +900,19 @@ class NewGameDialog(QDialog):
         # human_right_radio.setChecked(True)
         # self.right_player_buttons.append({"name": "Human", "radio": human_right_radio})
         # right_player_layout.addWidget(human_right_radio)
+        self.gomocup_models = self._read_gomocup_models()
         for i, agent in enumerate(agent_players):
             radio = QRadioButton(agent["name"])
             if i == 0:
                 radio.setChecked(True)
             self.right_player_buttons.append({"name": agent["name"], "radio": radio})
             right_player_layout.addWidget(radio)
+            if agent["name"] == "Gomocup AI":
+                self.right_gomocup_model_combo = QComboBox()
+                self.right_gomocup_model_combo.addItems(self.gomocup_models)
+                self.right_gomocup_model_combo.hide()
+                right_player_layout.addWidget(self.right_gomocup_model_combo)
+                radio.toggled.connect(self.right_gomocup_model_combo.setVisible)
         left_player_layout.addStretch()
         right_player_layout.addStretch()
         player_selection_layout.addWidget(self.left_player_group)
@@ -925,6 +956,27 @@ class NewGameDialog(QDialog):
         for btn_data in self.right_player_buttons:
             btn_data["radio"].toggled.connect(self.update_batch_mode_availability)
         self.update_batch_mode_availability()
+
+    def _read_gomocup_models(self):
+        gomocup_models_dir = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), "source"
+        )
+        model_names = []
+        try:
+            if os.path.exists(gomocup_models_dir) and os.path.isdir(gomocup_models_dir):
+                model_names = [
+                    name
+                    for name in os.listdir(gomocup_models_dir)
+                    if os.path.isdir(os.path.join(gomocup_models_dir, name))
+                ]
+                if not model_names:
+                    model_names.append("No models found in folder")
+            else:
+                model_names.append("Models folder not found")
+        except Exception as e:
+            model_names.append("Error reading models folder")
+
+        return model_names
 
     def update_batch_mode_availability(self):
         left_is_human = self.left_player_buttons[0]["radio"].isChecked()
