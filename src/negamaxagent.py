@@ -1578,8 +1578,8 @@ class NegamaxAgent:
                     live_fours += 1
                 if PATTERNS_PLAYER["LIVE_THREE"].search(normalized_line):
                     live_threes += 1
-                if PATTERNS_PLAYER["LIVE_TWO"].search(normalized_line):
-                    live_twos += 1
+                # if PATTERNS_PLAYER["LIVE_TWO"].search(normalized_line):
+                #     live_twos += 1
 
             if live_fours > 0 or live_threes >= 2:
                 block_moves.append((r, c))
