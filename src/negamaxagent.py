@@ -1593,6 +1593,8 @@ class NegamaxAgent:
                 block_moves.append((r, c))
             elif live_twos > 0 and sleepy_threes > 0:
                 block_moves.append((r, c))
+            elif live_twos > 0 and live_twos > 0:
+                block_moves.append((r, c))
 
             self.board[r, c] = EMPTY
 
