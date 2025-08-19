@@ -128,7 +128,7 @@ def find_nearest_empty_spot(board, x, y):
 
         def check_and_return(cx, cy):
             if 0 <= cx < board_size and 0 <= cy < board_size:
-                if board[cy][cx] == 0:
+                if board[cx][cy] == 0:
                     return [cx, cy]
             return None
 
