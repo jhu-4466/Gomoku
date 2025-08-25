@@ -1484,9 +1484,9 @@ class NegamaxAgent:
             # Add depth-aware scoring to distinguish between wins/losses at different speeds
             if abs(score) >= SCORE_TABLE["LIVE_FOUR"]["mine"]:
                 if score > 0:
-                    score -= 1  # Reward faster wins
+                    score += 1_000_000  # Reward faster wins
                 else:
-                    score += 1  # Penalize faster losses
+                    score -= 1_000_000  # Penalize faster losses
 
             if score > max_score:
                 max_score = score
@@ -1581,9 +1581,7 @@ class NegamaxAgent:
                 # if PATTERNS_PLAYER["LIVE_TWO"].search(normalized_line):
                 #     live_twos += 1
 
-            if live_fours > 0 or live_threes >= 2:
-                block_moves.append((r, c))
-            elif live_threes > 0:
+            if live_fours > 0 or live_threes > 0:
                 block_moves.append((r, c))
 
             self.board[r, c] = EMPTY
