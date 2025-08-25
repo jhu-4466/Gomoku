@@ -1,1 +1,9 @@
 gomoku_env
+*.pdf
+game_history
+evaluation
+test.py
+logs
+piskvork
+source
+presentation_assets
