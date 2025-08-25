@@ -1,0 +1,187 @@
+{
+    "game_id": "20250728_075149",
+    "winner_id": 2,
+    "winner_name": "Negamax AI",
+    "player_setup": {
+        "p1_name": "Gomocup AI",
+        "p2_name": "Negamax AI"
+    },
+    "final_colors": {
+        "1": 1,
+        "2": 2
+    },
+    "rules": {
+        "banned_moves_enabled": false,
+        "swap2_enabled": false
+    },
+    "move_history": [
+        {
+            "turn": 1,
+            "player_id": 1,
+            "move": [
+                12,
+                5
+            ],
+            "color": 1,
+            "thinking_time": 0.016
+        },
+        {
+            "turn": 2,
+            "player_id": 2,
+            "move": [
+                11,
+                4
+            ],
+            "color": 2,
+            "thinking_time": 3.733,
+            "search_depth": 4
+        },
+        {
+            "turn": 3,
+            "player_id": 1,
+            "move": [
+                11,
+                6
+            ],
+            "color": 1,
+            "thinking_time": 0.0156
+        },
+        {
+            "turn": 4,
+            "player_id": 2,
+            "move": [
+                12,
+                4
+            ],
+            "color": 2,
+            "thinking_time": 20.4473,
+            "search_depth": 5
+        },
+        {
+            "turn": 5,
+            "player_id": 1,
+            "move": [
+                13,
+                3
+            ],
+            "color": 1,
+            "thinking_time": 0.016
+        },
+        {
+            "turn": 6,
+            "player_id": 2,
+            "move": [
+                10,
+                5
+            ],
+            "color": 2,
+            "thinking_time": 14.861,
+            "search_depth": 4
+        },
+        {
+            "turn": 7,
+            "player_id": 1,
+            "move": [
+                9,
+                4
+            ],
+            "color": 1,
+            "thinking_time": 0.0168
+        },
+        {
+            "turn": 8,
+            "player_id": 2,
+            "move": [
+                13,
+                4
+            ],
+            "color": 2,
+            "thinking_time": 7.5732,
+            "search_depth": 4
+        },
+        {
+            "turn": 9,
+            "player_id": 1,
+            "move": [
+                14,
+                4
+            ],
+            "color": 1,
+            "thinking_time": 0.015
+        },
+        {
+            "turn": 10,
+            "player_id": 2,
+            "move": [
+                12,
+                3
+            ],
+            "color": 2,
+            "thinking_time": 10.303,
+            "search_depth": 4
+        },
+        {
+            "turn": 11,
+            "player_id": 1,
+            "move": [
+                13,
+                2
+            ],
+            "color": 1,
+            "thinking_time": 0.0156
+        },
+        {
+            "turn": 12,
+            "player_id": 2,
+            "move": [
+                11,
+                2
+            ],
+            "color": 2,
+            "thinking_time": 11.5107,
+            "search_depth": 4
+        },
+        {
+            "turn": 13,
+            "player_id": 1,
+            "move": [
+                11,
+                3
+            ],
+            "color": 1,
+            "thinking_time": 0.0141
+        },
+        {
+            "turn": 14,
+            "player_id": 2,
+            "move": [
+                9,
+                6
+            ],
+            "color": 2,
+            "thinking_time": 1.1659,
+            "search_depth": 2
+        },
+        {
+            "turn": 15,
+            "player_id": 1,
+            "move": [
+                14,
+                5
+            ],
+            "color": 1,
+            "thinking_time": 0.0162
+        },
+        {
+            "turn": 16,
+            "player_id": 2,
+            "move": [
+                8,
+                7
+            ],
+            "color": 2,
+            "thinking_time": 0.0172,
+            "search_depth": 1
+        }
+    ]
+}

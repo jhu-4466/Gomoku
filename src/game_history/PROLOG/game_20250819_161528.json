@@ -1,0 +1,418 @@
+{
+    "game_id": "20250819_161528",
+    "winner_id": 2,
+    "winner_name": "Negamax AI",
+    "player_setup": {
+        "p1_name": "Gomocup AI",
+        "p2_name": "Negamax AI"
+    },
+    "final_colors": {
+        "1": 1,
+        "2": 2
+    },
+    "rules": {
+        "banned_moves_enabled": false,
+        "swap2_enabled": false
+    },
+    "move_history": [
+        {
+            "turn": 1,
+            "player_id": 1,
+            "move": [
+                5,
+                5
+            ],
+            "color": 1,
+            "thinking_time": 0.0518
+        },
+        {
+            "turn": 2,
+            "player_id": 2,
+            "move": [
+                6,
+                5
+            ],
+            "color": 2,
+            "thinking_time": 29.3223,
+            "search_depth": 4
+        },
+        {
+            "turn": 3,
+            "player_id": 1,
+            "move": [
+                4,
+                6
+            ],
+            "color": 1,
+            "thinking_time": 0.072
+        },
+        {
+            "turn": 4,
+            "player_id": 2,
+            "move": [
+                7,
+                3
+            ],
+            "color": 2,
+            "thinking_time": 29.3143,
+            "search_depth": 4
+        },
+        {
+            "turn": 5,
+            "player_id": 1,
+            "move": [
+                3,
+                7
+            ],
+            "color": 1,
+            "thinking_time": 0.0637
+        },
+        {
+            "turn": 6,
+            "player_id": 2,
+            "move": [
+                6,
+                4
+            ],
+            "color": 2,
+            "thinking_time": 29.3236,
+            "search_depth": 5
+        },
+        {
+            "turn": 7,
+            "player_id": 1,
+            "move": [
+                2,
+                8
+            ],
+            "color": 1,
+            "thinking_time": 0.0659
+        },
+        {
+            "turn": 8,
+            "player_id": 2,
+            "move": [
+                1,
+                9
+            ],
+            "color": 2,
+            "thinking_time": 0.0156,
+            "search_depth": 0
+        },
+        {
+            "turn": 9,
+            "player_id": 1,
+            "move": [
+                6,
+                6
+            ],
+            "color": 1,
+            "thinking_time": 0.0882
+        },
+        {
+            "turn": 10,
+            "player_id": 2,
+            "move": [
+                6,
+                2
+            ],
+            "color": 2,
+            "thinking_time": 29.3213,
+            "search_depth": 4
+        },
+        {
+            "turn": 11,
+            "player_id": 1,
+            "move": [
+                6,
+                3
+            ],
+            "color": 1,
+            "thinking_time": 0.0833
+        },
+        {
+            "turn": 12,
+            "player_id": 2,
+            "move": [
+                7,
+                4
+            ],
+            "color": 2,
+            "thinking_time": 29.3229,
+            "search_depth": 5
+        },
+        {
+            "turn": 13,
+            "player_id": 1,
+            "move": [
+                5,
+                6
+            ],
+            "color": 1,
+            "thinking_time": 0.083
+        },
+        {
+            "turn": 14,
+            "player_id": 2,
+            "move": [
+                3,
+                6
+            ],
+            "color": 2,
+            "thinking_time": 0.0238,
+            "search_depth": 0
+        },
+        {
+            "turn": 15,
+            "player_id": 1,
+            "move": [
+                7,
+                6
+            ],
+            "color": 1,
+            "thinking_time": 0.0724
+        },
+        {
+            "turn": 16,
+            "player_id": 2,
+            "move": [
+                8,
+                6
+            ],
+            "color": 2,
+            "thinking_time": 0.0157,
+            "search_depth": 0
+        },
+        {
+            "turn": 17,
+            "player_id": 1,
+            "move": [
+                5,
+                7
+            ],
+            "color": 1,
+            "thinking_time": 0.101
+        },
+        {
+            "turn": 18,
+            "player_id": 2,
+            "move": [
+                5,
+                8
+            ],
+            "color": 2,
+            "thinking_time": 0.026,
+            "search_depth": 0
+        },
+        {
+            "turn": 19,
+            "player_id": 1,
+            "move": [
+                5,
+                4
+            ],
+            "color": 1,
+            "thinking_time": 0.0815
+        },
+        {
+            "turn": 20,
+            "player_id": 2,
+            "move": [
+                5,
+                3
+            ],
+            "color": 2,
+            "thinking_time": 0.0164,
+            "search_depth": 0
+        },
+        {
+            "turn": 21,
+            "player_id": 1,
+            "move": [
+                7,
+                5
+            ],
+            "color": 1,
+            "thinking_time": 0.096
+        },
+        {
+            "turn": 22,
+            "player_id": 2,
+            "move": [
+                8,
+                4
+            ],
+            "color": 2,
+            "thinking_time": 0.0226,
+            "search_depth": 0
+        },
+        {
+            "turn": 23,
+            "player_id": 1,
+            "move": [
+                4,
+                8
+            ],
+            "color": 1,
+            "thinking_time": 0.091
+        },
+        {
+            "turn": 24,
+            "player_id": 2,
+            "move": [
+                3,
+                9
+            ],
+            "color": 2,
+            "thinking_time": 0.0171,
+            "search_depth": 0
+        },
+        {
+            "turn": 25,
+            "player_id": 1,
+            "move": [
+                9,
+                5
+            ],
+            "color": 1,
+            "thinking_time": 0.1082
+        },
+        {
+            "turn": 26,
+            "player_id": 2,
+            "move": [
+                10,
+                4
+            ],
+            "color": 2,
+            "thinking_time": 0.0225,
+            "search_depth": 0
+        },
+        {
+            "turn": 27,
+            "player_id": 1,
+            "move": [
+                9,
+                4
+            ],
+            "color": 1,
+            "thinking_time": 0.0952
+        },
+        {
+            "turn": 28,
+            "player_id": 2,
+            "move": [
+                4,
+                9
+            ],
+            "color": 2,
+            "thinking_time": 0.0233,
+            "search_depth": 0
+        },
+        {
+            "turn": 29,
+            "player_id": 1,
+            "move": [
+                2,
+                9
+            ],
+            "color": 1,
+            "thinking_time": 0.11
+        },
+        {
+            "turn": 30,
+            "player_id": 2,
+            "move": [
+                7,
+                2
+            ],
+            "color": 2,
+            "thinking_time": 29.3203,
+            "search_depth": 5
+        },
+        {
+            "turn": 31,
+            "player_id": 1,
+            "move": [
+                5,
+                1
+            ],
+            "color": 1,
+            "thinking_time": 0.13
+        },
+        {
+            "turn": 32,
+            "player_id": 2,
+            "move": [
+                7,
+                1
+            ],
+            "color": 2,
+            "thinking_time": 2.029,
+            "search_depth": 0
+        },
+        {
+            "turn": 33,
+            "player_id": 1,
+            "move": [
+                7,
+                0
+            ],
+            "color": 1,
+            "thinking_time": 0.105
+        },
+        {
+            "turn": 34,
+            "player_id": 2,
+            "move": [
+                8,
+                2
+            ],
+            "color": 2,
+            "thinking_time": 2.0293,
+            "search_depth": 0
+        },
+        {
+            "turn": 35,
+            "player_id": 1,
+            "move": [
+                8,
+                0
+            ],
+            "color": 1,
+            "thinking_time": 0.1227
+        },
+        {
+            "turn": 36,
+            "player_id": 2,
+            "move": [
+                5,
+                2
+            ],
+            "color": 2,
+            "thinking_time": 0.0274,
+            "search_depth": 0
+        },
+        {
+            "turn": 37,
+            "player_id": 1,
+            "move": [
+                4,
+                2
+            ],
+            "color": 1,
+            "thinking_time": 0.0967
+        },
+        {
+            "turn": 38,
+            "player_id": 2,
+            "move": [
+                9,
+                2
+            ],
+            "color": 2,
+            "thinking_time": 0.0176,
+            "search_depth": 0
+        }
+    ]
+}

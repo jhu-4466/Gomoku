@@ -1,0 +1,114 @@
+{
+    "game_id": "20250807_001545",
+    "winner_id": 1,
+    "winner_name": "Negamax AI",
+    "player_setup": {
+        "p1_name": "Negamax AI",
+        "p2_name": "Gomocup AI"
+    },
+    "final_colors": {
+        "1": 1,
+        "2": 2
+    },
+    "rules": {
+        "banned_moves_enabled": false,
+        "swap2_enabled": false
+    },
+    "move_history": [
+        {
+            "turn": 1,
+            "player_id": 1,
+            "move": [
+                7,
+                7
+            ],
+            "color": 1,
+            "thinking_time": 0.014,
+            "search_depth": 0
+        },
+        {
+            "turn": 2,
+            "player_id": 2,
+            "move": [
+                0,
+                13
+            ],
+            "color": 2,
+            "thinking_time": 0.0163
+        },
+        {
+            "turn": 3,
+            "player_id": 1,
+            "move": [
+                5,
+                7
+            ],
+            "color": 1,
+            "thinking_time": 29.5813,
+            "search_depth": 4
+        },
+        {
+            "turn": 4,
+            "player_id": 2,
+            "move": [
+                0,
+                14
+            ],
+            "color": 2,
+            "thinking_time": 0.0156
+        },
+        {
+            "turn": 5,
+            "player_id": 1,
+            "move": [
+                8,
+                7
+            ],
+            "color": 1,
+            "thinking_time": 29.6139,
+            "search_depth": 4
+        },
+        {
+            "turn": 6,
+            "player_id": 2,
+            "move": [
+                8,
+                10
+            ],
+            "color": 2,
+            "thinking_time": 0.0156
+        },
+        {
+            "turn": 7,
+            "player_id": 1,
+            "move": [
+                6,
+                7
+            ],
+            "color": 1,
+            "thinking_time": 5.9683,
+            "search_depth": 3
+        },
+        {
+            "turn": 8,
+            "player_id": 2,
+            "move": [
+                8,
+                11
+            ],
+            "color": 2,
+            "thinking_time": 0.015
+        },
+        {
+            "turn": 9,
+            "player_id": 1,
+            "move": [
+                9,
+                7
+            ],
+            "color": 1,
+            "thinking_time": 0.1342,
+            "search_depth": 1
+        }
+    ]
+}
