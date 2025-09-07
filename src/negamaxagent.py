@@ -60,7 +60,7 @@ BLACK = 1
 WHITE = 2
 TIME_LIMIT = 29.5  # Time limit for the AI to make a move, in seconds.
 MAX_DEPTH = 50  # Max search depth for IDDFS
-TOP_K_BY_DEPTH = [20, 16, 14, 12]
+TOP_K_BY_DEPTH = [24, 22, 20, 18, 16]
 MOVE_DIRECTIONS = [(1, 0), (0, 1), (1, 1), (1, -1)]
 # VCF/VCT
 MAX_VCF_DEPTH = 12
@@ -80,7 +80,7 @@ SCORE_TABLE = {
     "LIVE_FOUR": {"mine": 120_000, "opp": 1_000_000},
     "LIVE_THREE": {"mine": 80_000, "opp": 150_000},
     "RUSH_FOUR": {"mine": 10_000, "opp": 50_000},
-    "SLEEPY_THREE": {"mine": 1_300, "opp": 3_000},
+    "SLEEPY_THREE": {"mine": 5_000, "opp": 7_000},
     "LIVE_TWO": {"mine": 1_600, "opp": 2_000},
     "SLEEPY_TWO": {"mine": 100, "opp": 150},
     "POSITIONAL_BONUS_FACTOR": 5,
@@ -94,7 +94,7 @@ PATTERNS_PLAYER = {
     "RUSH_FOUR": re.compile(r"211110|011112|10111|11011|11101"),
     "LIVE_THREE": re.compile(r"01110|010110|011010"),
     "SLEEPY_THREE": re.compile(r"21110|01112|210110|011012|21101|10112"),
-    "LIVE_TWO": re.compile(r"001100|01100|01010"),
+    "LIVE_TWO": re.compile(r"0110|01010"),
     "SLEEPY_TWO": re.compile(r"2110|0112|21010|01012"),
 }
 
@@ -366,11 +366,11 @@ class VCFSearcher:
         result.time_elapsed = time.time() - self.start_time
 
         logger.info(
-            f"[VCT] VCT search completed for player {player}: is_winning={result.is_winning}"
+            f"[VCF] VCF search completed for player {player}: is_winning={result.is_winning}"
         )
         if result.is_winning:
             logger.info(
-                f"[VCT] Player {player} has a winning move {result.winning_move}!"
+                f"[VCF] Player {player} has a winning move {result.winning_move}!"
             )
         return result
 
@@ -1295,7 +1295,6 @@ class NegamaxAgent:
             original_stone = base[idx]
             base[idx] = char_player
             s_player_pc = "".join(base).translate(trans_player)
-
             for name, regex in patterns_items:
                 if regex.search(s_player_pc):
                     offensive_cnt += 1
@@ -1303,7 +1302,6 @@ class NegamaxAgent:
             # Opponent's view
             base[idx] = char_opp
             s_opp_pc = "".join(base).translate(trans_opp)
-
             for name, regex in patterns_items:
                 if regex.search(s_opp_pc):
                     defensive_cnt += 1
@@ -1544,8 +1542,9 @@ class NegamaxAgent:
 
         return list(moves)
 
-    def _blocks_threats(self, opponent_player, banned_moves_enabled):
-        block_moves = []
+    def _blocks_threats(self, opponent_player, banned_moves_enabled, is_extra=False):
+        block_moves_4 = set()
+        block_moves_3 = set()
 
         candidate_moves = self._get_candidate_moves(
             opponent_player, banned_moves_enabled
@@ -1556,10 +1555,11 @@ class NegamaxAgent:
             live_fours = 0
             live_threes = 0
             live_twos = 0
+            rush_fours = 0
 
             for dr, dc in MOVE_DIRECTIONS:
                 line_str_list = []
-                for i in range(-5, 6):
+                for i in range(-7, 8):
                     nr, nc = r + i * dr, c + i * dc
                     if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
                         line_str_list.append(str(self.board[nr, nc]))
@@ -1575,18 +1575,51 @@ class NegamaxAgent:
                     normalized_line = line_str
 
                 if PATTERNS_PLAYER["LIVE_FOUR"].search(normalized_line):
-                    live_fours += 1
-                if PATTERNS_PLAYER["LIVE_THREE"].search(normalized_line):
+                    logger.debug(
+                        f"Found LIVE_FOUR threat at {(r, c)} in direction {(dr, dc)} with line {normalized_line}"
+                    )
+                    block_moves_4.add((r, c))
+                elif PATTERNS_PLAYER["LIVE_THREE"].search(normalized_line):
+                    logger.debug(
+                        f"Found LIVE_THREE threat at {(r, c)} in direction {(dr, dc)} with line {normalized_line}"
+                    )
+                    if not is_extra:
+                        block_moves_3.add((r, c))
+                        continue
                     live_threes += 1
+                elif (
+                    PATTERNS_PLAYER["RUSH_FOUR"].search(normalized_line)
+                    and not is_extra
+                ):
+                    rush_fours += 1
+                    logger.debug(
+                        f"Found RUSH_FOUR threat at {(r, c)} in direction {(dr, dc)} with line {normalized_line}, num = {rush_fours}"
+                    )
+                    if rush_fours >= 2:
+                        self.board[r, c] = EMPTY
+                        return [(r, c)]  # Immediate block needed
                 # if PATTERNS_PLAYER["LIVE_TWO"].search(normalized_line):
                 #     live_twos += 1
 
-            if live_fours > 0 or live_threes > 0:
-                block_moves.append((r, c))
+                if live_threes >= 1 and rush_fours >= 1:
+                    logger.debug(
+                        f"Found LIVE_THREE and RUSH_FOUR threat at {(r, c)} in direction {(dr, dc)} with line {normalized_line}"
+                    )
+                    self.board[r, c] = EMPTY
+                    return [(r, c)]
+                if live_threes >= 2:
+                    logger.debug(
+                        f"Found double LIVE_THREE threat at {(r, c)} in direction {(dr, dc)} with line {normalized_line}"
+                    )
+                    self.board[r, c] = EMPTY
+                    return [(r, c)]
 
             self.board[r, c] = EMPTY
 
-        return block_moves
+        logger.info(
+            f"[Turn {self.current_turn}] Candidate Block Moves: {block_moves_4, block_moves_3}."
+        )
+        return list(block_moves_4) if block_moves_4 else list(block_moves_3)
 
     def find_best_move(self, board_state, player, banned_moves_enabled):
         self.board = np.array(board_state)
@@ -1635,9 +1668,13 @@ class NegamaxAgent:
                 for move in defensive_moves:
                     r, c = move
 
-                    self.board[r, c] = player
-                    score = self._calculate_synergy_at(r, c, player)
+                    self.board[r, c] = opponent
+                    self.evaluator.update_score(self.board, r, c, opponent)
+                    score = self.evaluator.get_current_score(
+                        opponent
+                    ) + self._calculate_synergy_at(r, c, opponent)
                     self.board[r, c] = EMPTY
+                    self.evaluator.update_score(self.board, r, c, EMPTY)
 
                     if score > best_defense_score:
                         best_defense_score = score
@@ -1668,18 +1705,20 @@ class NegamaxAgent:
             logger.info(
                 f"[Turn {self.current_turn}] Opponent's VCT win detected. Finding defense."
             )
-            block_moves = self._blocks_threats(opponent, banned_moves_enabled)
-            if block_moves:
+            defensive_moves = self._blocks_threats(
+                opponent, banned_moves_enabled, is_extra=False
+            )
+            if defensive_moves:
                 best_defense_move = None
                 best_defense_score = -float("inf")
-                for move in block_moves:
+                for move in defensive_moves:
                     r, c = move
 
-                    self.board[r, c] = player
-                    self.evaluator.update_score(self.board, r, c, player)
+                    self.board[r, c] = opponent
+                    self.evaluator.update_score(self.board, r, c, opponent)
                     score = self.evaluator.get_current_score(
-                        player
-                    ) + self._calculate_synergy_at(r, c, player)
+                        opponent
+                    ) + self._calculate_synergy_at(r, c, opponent)
                     self.board[r, c] = EMPTY
                     self.evaluator.update_score(self.board, r, c, EMPTY)
 
@@ -1700,6 +1739,34 @@ class NegamaxAgent:
                 logger.info(
                     "[DEBUG] VCT defense detection failed, continuing to normal search..."
                 )
+        # Extra defense for single LIVE_THREE
+        block_moves = self._blocks_threats(
+            opponent, banned_moves_enabled, is_extra=True
+        )
+        if block_moves:
+            logger.info(
+                f"[Turn {self.current_turn}] Extra defense: Blocking opponent's potential threats at {block_moves}. Skipping search."
+            )
+            best_defense_move = None
+            best_defense_score = -float("inf")
+            for move in block_moves:
+                r, c = move
+
+                self.board[r, c] = opponent
+                self.evaluator.update_score(self.board, r, c, opponent)
+                score = self.evaluator.get_current_score(
+                    opponent
+                ) + self._calculate_synergy_at(r, c, opponent)
+                self.board[r, c] = EMPTY
+                self.evaluator.update_score(self.board, r, c, EMPTY)
+
+                if score > best_defense_score:
+                    best_defense_score = score
+                    best_defense_move = move
+
+            best_move_so_far = best_defense_move
+            final_search_depth = 0
+            return best_move_so_far, final_search_depth
         # 4. My VCT
         my_vct = self.vct_searcher.search(self.board, player, MAX_VCT_DEPTH)
         if my_vct.is_winning:
