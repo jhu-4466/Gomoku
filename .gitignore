@@ -2,7 +2,6 @@ gomoku_env
 *.pdf
 evaluation
 test.py
-logs
 piskvork
 source
 presentation_assets
@@ -12,3 +11,4 @@ presentation_assets
 *.png
 *.osp
 *.jpg
+*.json
