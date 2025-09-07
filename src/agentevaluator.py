@@ -53,7 +53,7 @@ class AgentEvaluator:
                 patterns["LIVE_FOUR"] += 1
             if "XOOOO_" in line_str or "_OOOOX" in line_str:
                 patterns["RUSH_FOUR"] += 1
-            if "_OOO_" in line_str:
+            if "_OOO_" in line_str or "_OO_O_" in line_str or "_O_OO_" in line_str:
                 patterns["LIVE_THREE"] += 1
 
         return patterns
