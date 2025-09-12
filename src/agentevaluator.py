@@ -73,6 +73,8 @@ class AgentEvaluator:
             self.stats[player_name]["defense"]["Blocked Live Fours"] += 1
         if opponent_threats["LIVE_THREE"] > 0:
             self.stats[player_name]["defense"]["Blocked Live Threes"] += 1
+        if opponent_threats["RUSH_FOUR"] > 0:
+            self.stats[player_name]["defense"]["Blocked Rush Fours"] += 1
 
         # Assess Offensive Value
         board_after = board_before.copy()
@@ -80,6 +82,10 @@ class AgentEvaluator:
         our_threats = self._get_line_patterns(board_after, r, c, player_color)
         if our_threats["LIVE_THREE"] > 0:
             self.stats[player_name]["offense"]["Live Threes Created"] += 1
+        if our_threats["RUSH_FOUR"] > 0:
+            self.stats[player_name]["offense"]["Rush Fours Created"] += 1
+        if our_threats["LIVE_FOUR"] > 0:
+            self.stats[player_name]["offense"]["Live Fours Created"] += 1
 
     def run_analysis(self):
         """Replays the game, analyzes each move, and returns structured results."""
@@ -181,7 +187,10 @@ class AgentEvaluator:
             "Blocked Fives": agent_stats["defense"]["Blocked Fives"],
             "Blocked Live Fours": agent_stats["defense"]["Blocked Live Fours"],
             "Blocked Live Threes": agent_stats["defense"]["Blocked Live Threes"],
+            "Blocked Rush Fours": agent_stats["defense"]["Blocked Rush Fours"],
             "Live Threes Created": agent_stats["offense"]["Live Threes Created"],
+            "Rush Fours Created": agent_stats["offense"]["Rush Fours Created"],
+            "Live Fours Created": agent_stats["offense"]["Live Fours Created"],
             "__internal_agent_moves": agent_stats["timed_moves"],
         }
 
@@ -290,8 +299,10 @@ class BatchEvaluator:
             "Agent Max Depth": "N/A",
             "Blocked Fives": round(details_df["Blocked Fives"].mean(), 2),
             "Blocked Live Fours": round(details_df["Blocked Live Fours"].mean(), 2),
-            "Blocked Live Threes": round(details_df["Blocked Live Threes"].mean(), 2),
+            "Blocked Rush Fours": round(details_df["Blocked Rush Fours"].mean(), 2),
             "Live Threes Created": round(details_df["Live Threes Created"].mean(), 2),
+            "Rush Fours Created": round(details_df["Rush Fours Created"].mean(), 2),
+            "Live Fours Created": round(details_df["Live Fours Created"].mean(), 2),
         }
 
         summary_df = pd.DataFrame([summary_row])
