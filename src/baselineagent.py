@@ -162,13 +162,13 @@ def get_move():
     for r, c in valid_moves:
         if check_line_at(board, r, c, opponent_color, 5):
             return jsonify({"move": [r, c]})
-    # 3. Create an open four
-    for r, c in valid_moves:
-        if check_line_at(board, r, c, color_to_play, 4):
-            return jsonify({"move": [r, c]})
-    # 4. Block opponent's open four
+    # 3. Block opponent's open four
     for r, c in valid_moves:
         if check_line_at(board, r, c, opponent_color, 4):
+            return jsonify({"move": [r, c]})
+    # 4. Create an open four
+    for r, c in valid_moves:
+        if check_line_at(board, r, c, color_to_play, 4):
             return jsonify({"move": [r, c]})
     # 5. Block opponent's three
     for r, c in valid_moves:
