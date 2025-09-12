@@ -20,6 +20,7 @@ pip install requirements.txt
 ```
 
 ## Goes to the code folder, then runs the program
+Here you need to open at least 3 cmd windows or powershell windows or so on.
 ```shell
 cd src
 python ./gomokuapp.py
