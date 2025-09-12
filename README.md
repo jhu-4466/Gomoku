@@ -14,6 +14,8 @@ python3 -m venv gomoku_env
 ./gomoku_env/Scripts/Activate.ps1
 ```
 
+If you prefer to use anaconda or others, you can skip this step, it will be fine.
+
 ## Installs required libraries
 ```shell
 pip install requirements.txt
