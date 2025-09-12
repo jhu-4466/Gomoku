@@ -26,3 +26,5 @@ python ./gomokuapp.py
 python ./negamaxagent.py
 python ./aiwrapper.py -m "./source/yourGomocupAIpath/yourGomocupAI.exe"
 ```
+
+if there is no "source" folder in ./src, pls new it first.
